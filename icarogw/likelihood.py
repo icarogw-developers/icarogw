@@ -7,7 +7,7 @@ from .wrappers import FlatLambdaCDM_wrap
 
 # LVK Reviewed
 class hierarchical_likelihood(bilby.Likelihood):
-    def __init__(self, posterior_samples_dict, injections, rate_model, nparallel=None, neffPE=20,neffINJ=None):
+    def __init__(self, posterior_samples_dict, injections, rate_model, cosmo_ref, nparallel=None, neffPE=20,neffINJ=None):
         '''
         Base class for an hierachical liklihood. It just saves all the input requirements for a general hierarchical analysis
         
@@ -32,7 +32,6 @@ class hierarchical_likelihood(bilby.Likelihood):
         self.neffPE=neffPE
         self.rate_model=rate_model
         self.posterior_samples_dict=posterior_samples_dict
-        self.posterior_samples_dict.build_parallel_posterior(nparallel=nparallel)
         
         if neffINJ is None:
             self.neffINJ=4*self.posterior_samples_dict.n_ev

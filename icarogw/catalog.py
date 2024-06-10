@@ -113,11 +113,10 @@ class galaxy_catalog(object):
     A class to handle galaxy catalogs. This class creates a hdf5 file containing all the necessary informations.
     '''
     
-    
     def __init__(self):
         pass
     
-    def create_hdf5(self,filename,cat_data,band,nside):
+    def create_hdf5(self,filename,cat_data,cat_name,band,nside):
         '''
         Creates the HDF5 file
 
@@ -128,9 +127,11 @@ class galaxy_catalog(object):
         cat_data: dictionary
             Dictionary of arrays containings for each galaxy 'ra': right ascensions in rad, 'dec': declination in radians
             'z': galaxy redshift, 'sigmaz': redshift uncertainty (can not be zero), 'm': apparent magnitude.
+        cat_name: string
+            Name of the catalog being used. Available catalogs: 'GLADEplus', 'upGLADE', 'MICEcat'
         band: string
-            Band to use for the background corrections, need to be compatible with apparent magnitude. Bands available
-            'K', 'W1', 'bJ'
+            Band to use for the background corrections, need to be compatible with apparent magnitude and with chosen catalog. Available bands:
+            'K', 'W1', 'bJ'.
         nside: int
             Nside to use for the healpy pixelization
         '''
@@ -143,9 +144,10 @@ class galaxy_catalog(object):
         # Pixelize the galaxies
         cat_data['sky_indices'] = radec2indeces(cat_data['ra'],cat_data['dec'],nside)
         
-        with h5py.File(filename,'w-') as f:
+        with h5py.File(filename,'w') as f:
 
             cat=f.create_group('catalog')
+            cat.attrs['name']=cat_name
             cat.attrs['band']=band
             cat.attrs['nside']=nside
             cat.attrs['npixels']=hp.nside2npix(nside)
@@ -159,8 +161,9 @@ class galaxy_catalog(object):
             
         self.hdf5pointer = h5py.File(filename,'r+')
         self.calc_kcorr=kcorr(self.hdf5pointer['catalog'].attrs['band'])
+        print(vars(self))
     
-    def load_hdf5(self,filename,cosmo_ref=None,epsilon=None):
+    def load_hdf5(self,filename,evolving):
         '''
         Loads the catalog HDF5 file
         
@@ -168,15 +171,14 @@ class galaxy_catalog(object):
         ----------
         filename: string
             Name of the catalgo HDF5 file to load.
-        cosmo_ref: class 
-            Cosmology class used to create the catalog
-        epsilon: float
-            Luminosity weight index used to create the galaxy density interpolant
+        evolving: bool
+            Evolving or non-evolving self.sch_fun. By default False.
         '''
         
         self.hdf5pointer = h5py.File(filename,'r')
-        self.sch_fun=galaxy_MF(band=self.hdf5pointer['catalog'].attrs['band'])
+        self.sch_fun=galaxy_MF(evolving=evolving,cat_name=self.hdf5pointer['catalog'].attrs['name'],band=self.hdf5pointer['catalog'].attrs['band'])
         self.calc_kcorr=kcorr(self.hdf5pointer['catalog'].attrs['band'])
+        
         # Stores it internally
         try:
             if self.hdf5pointer['catalog/mthr_map'].attrs['mthr_percentile'] == 'empty':
@@ -186,26 +188,16 @@ class galaxy_catalog(object):
             else:
                 self.mthr_map_cpu = self.hdf5pointer['catalog/mthr_map/mthr_sky'][:]
                 if is_there_cupy:
-                    self.mthr_map_gpu = np2cp(self.hdf5pointer['catalog/mthr_map/mthr_sky'][:])
-                
+                    self.mthr_map_gpu = np2cp(self.hdf5pointer['catalog/mthr_map/mthr_sky'][:])  
             print('Loading apparent magnitude threshold map')
+            
         except:
             print('Apparent magnitude threshold not present')
-
-        if cosmo_ref is not None:
-            self.sch_fun.build_MF(cosmo_ref)
         
-        if epsilon is not None:
-            self.sch_fun.build_effective_number_density_interpolant(epsilon)
-            
         try:
-            if cosmo_ref is None:
-                raise ValueError('You need to provide a cosmology if you want to load the interpolant')
-            
-            self.sch_fun.build_effective_number_density_interpolant(
-                self.hdf5pointer['catalog/dNgal_dzdOm_interpolant'].attrs['epsilon'])
+            #Removed some stuff here
             interpogroup = self.hdf5pointer['catalog/dNgal_dzdOm_interpolant']
-            
+
             dNgal_dzdOm_vals = []
             for i in range(self.hdf5pointer['catalog'].attrs['npixels']):
                 dNgal_dzdOm_vals.append(interpogroup['vals_pixel_{:d}'.format(i)][:])
@@ -213,13 +205,13 @@ class galaxy_catalog(object):
             self.dNgal_dzdOm_vals_cpu = np.column_stack(dNgal_dzdOm_vals)
             self.dNgal_dzdOm_vals_cpu[np.isnan(self.dNgal_dzdOm_vals_cpu)] = -np.inf
             self.dNgal_dzdOm_vals_cpu = np.exp(self.dNgal_dzdOm_vals_cpu.astype(float))
-            
+
             self.dNgal_dzdOm_sky_mean_cpu = np.mean(self.dNgal_dzdOm_vals_cpu,axis=1)
             self.z_grid_cpu = interpogroup['z_grid'][:]
             self.pixel_grid_cpu = np.arange(0,self.hdf5pointer['catalog'].attrs['npixels'],1).astype(int)
-            
+
             print('Loading Galaxy density interpolant')
-            
+
             if is_there_cupy:
                 self.dNgal_dzdOm_vals_gpu=np2cp(self.dNgal_dzdOm_vals_cpu)
                 self.dNgal_dzdOm_sky_mean_gpu=np2cp(self.dNgal_dzdOm_sky_mean_cpu)
@@ -360,9 +352,7 @@ class galaxy_catalog(object):
         return m2M(mthr_arrays,dl,self.calc_kcorr(z))
     
         
-    def calc_dN_by_dzdOmega_interpolant(self,cosmo_ref,epsilon,
-                                        Nintegration=10,Numsigma=1,
-                                        zcut=None,ptype='uniform'):
+    def calc_dN_by_dzdOmega_interpolant(self,cosmo_ref,epsilon,Nintegration=10,Numsigma=1,zcut=None,ptype='uniform'):
         '''
         Fits the dNgal/dzdOmega interpolant
         
@@ -372,7 +362,7 @@ class galaxy_catalog(object):
             Cosmology used to compute the differential of comoving volume (normalized)
         epsilon: float
             Luminosity weight
-        Nres: int 
+        Nintegration: int 
             Increasing factor for the interpolation array in z
         Numsigma: float
             Half Width for the uniform distribution method in terms of sigmaz
@@ -382,8 +372,11 @@ class galaxy_catalog(object):
             'uniform' or 'gaussian' for the EM likelihood type of galaxies
         '''
         
-        self.sch_fun=galaxy_MF(band=self.hdf5pointer['catalog'].attrs['band'])
-        self.sch_fun.build_effective_number_density_interpolant(epsilon)
+        self.sch_fun=galaxy_MF(evolving=False,cat_name=self.hdf5pointer['catalog'].attrs['name'], band=self.hdf5pointer['catalog'].attrs['band'])
+        
+        # If zcut is none, it uses the maximum of the cosmology
+        if zcut is None:
+            zcut = cosmo_ref.zmax
         
         # Overrides the num of sigma for the gaussian
         if (ptype == 'gaussian') | (ptype == 'gaussian_nocom'):
@@ -402,9 +395,8 @@ class galaxy_catalog(object):
             interpogroup = self.hdf5pointer['catalog/dNgal_dzdOm_interpolant']
             indx_sky = interpogroup.attrs['sky_checkpoint']
             print('Group already exists, resuming from pixel {:d}'.format(indx_sky))
-        
+
         self.sch_fun.build_MF(cosmo_ref)
-        
         cat_data=self.hdf5pointer['catalog']
         
         # If zcut is none, it uses the maximum of the cosmology
@@ -412,9 +404,9 @@ class galaxy_catalog(object):
             zcut = cosmo_ref.zmax
         
         # Selects all the galaxies that have support below zcut and above 1e-6
-        idx_in_range = np.where((cat_data['z'][:]-Numsigma*cat_data['sigmaz'][:]<=zcut) & (cat_data['z'][:]+Numsigma*cat_data['sigmaz'][:]>=1e-6))[0]
+        idx_in_range = np.where(((cat_data['z'][:]-Numsigma*cat_data['sigmaz'][:])<=zcut) & ((cat_data['z'][:]+Numsigma*cat_data['sigmaz'][:])>=1e-6))[0]
         if len(idx_in_range)==0:
-            raise ValueError('There are no galaxies in the redshift range 1e-6 - {:f}'.format(maxz))
+            raise ValueError('There are no galaxies in the redshift range 1e-6 - {:f}'.format(zmax))
                 
         interpolation_width = np.empty(len(idx_in_range),dtype=np.float32)
         j = 0
@@ -422,7 +414,7 @@ class galaxy_catalog(object):
             zmin = np.max([cat_data['z'][i]-Numsigma*cat_data['sigmaz'][i],1e-6])
             zmax = np.min([cat_data['z'][i]+Numsigma*cat_data['sigmaz'][i],zcut])
             if zmax>=cosmo_ref.zmax:
-                print(minz,maxz)
+                print(zmin,zmax)
                 raise ValueError('The maximum redshift for interpolation is too high w.r.t the cosmology class')        
             interpolation_width[j]=zmax-zmin
             j+=1
@@ -483,7 +475,7 @@ class galaxy_catalog(object):
             interpogroup.create_dataset('vals_pixel_{:d}'.format(i), data = interpo, dtype = np.float16)
         
         self.hdf5pointer.close()
-                
+        
     def effective_galaxy_number_interpolant(self,z,skypos,cosmology,dl=None,average=False):
         '''
         Returns an evaluation of dNgal/dzdOmega, it requires `calc_dN_by_dzdOmega_interpolant` to be called first.
@@ -491,7 +483,7 @@ class galaxy_catalog(object):
         Parameters
         ----------
         z: xp.array
-            Redshift array
+            Redshift array where to evaluate the interpolant
         skypos: xp.array
             Array containing the healpix indeces where to evaluate the interpolant
         cosmology: class
@@ -501,20 +493,24 @@ class galaxy_catalog(object):
         average: bool
             Use the sky averaged differential of effective number of galaxies in each pixel
         '''
+        print("effective_galaxy_number_interpolant")
+        
         xp=get_module_array(z)
         sx=get_module_array_scipy(z)
        
         originshape=z.shape
         z=z.flatten()
-        self.sch_fun.build_MF(cosmology)
         skypos=skypos.flatten()
         
         if dl is None:
             dl=cosmology.z2dl(z)
         dl=dl.flatten()
         
+        self.sch_fun.build_MF(cosmology,z)
+        self.sch_fun.build_effective_number_density_interpolant(self.hdf5pointer['catalog/dNgal_dzdOm_interpolant'].attrs['epsilon'],z)
+        
         if isinstance(self.mthr_map_cpu, str):
-            return xp.zeros(len(z)).reshape(originshape), (self.sch_fun.background_effective_galaxy_density(-xp.inf*xp.ones_like(z))*cosmology.dVc_by_dzdOmega_at_z(z)).reshape(originshape)
+            return xp.zeros(len(z)).reshape(originshape), (np.dot(cosmology.dVc_by_dzdOmega_at_z(z), self.sch_fun.background_effective_galaxy_density_at_z(-xp.inf*xp.ones_like(z))),z).reshape(originshape)
         
         if iscupy(z):
             z_grid = self.z_grid_gpu
@@ -528,8 +524,7 @@ class galaxy_catalog(object):
             pixel_grid = self.pixel_grid_cpu
         
         Mthr_array=self.calc_Mthr(z,skypos,cosmology,dl=dl)
-        # Baiscally tells that if you are above the maximum interpolation range, you detect nothing
-        Mthr_array[z>z_grid[-1]]=-xp.inf
+        Mthr_array[z>z_grid[-1]]=-xp.inf # Basically tells that if you are above the maximum interpolation range, you detect nothing
         gcpart,bgpart=xp.zeros_like(z),xp.zeros_like(z)
         
         if average:
@@ -538,23 +533,25 @@ class galaxy_catalog(object):
             gcpart=sx.interpolate.interpn((z_grid,pixel_grid),dNgal_dzdOm_vals,xp.column_stack([z,skypos]),bounds_error=False,
                                 fill_value=0.,method='linear') # If a posterior samples fall outside, then you return 0
         
-        bgpart=self.sch_fun.background_effective_galaxy_density(Mthr_array)*cosmology.dVc_by_dzdOmega_at_z(z)
+        sch=self.sch_fun.background_effective_galaxy_density_at_z(Mthr_array,z)
+        Vc=cosmology.dVc_by_dzdOmega_at_z(z)
+        bgpart=np.dot(Vc,sch)
         
         return gcpart.reshape(originshape),bgpart.reshape(originshape)
         
     def check_differential_effective_galaxies(self,z,radec_indices_list,cosmology):
         '''
-        This method checks the comoving volume distribution built from the catalog. It is basically a complementary check to the galaxy schecther function
+        This method checks the comoving volume distribution built from the catalog. It is basically a complementary check to the galaxy schechter function
         distribution
         
         Parameters
         ----------
         z: np.array
             Array of redshifts where to evaluate the effective galaxy density
-        radec_indices: np.array
+        radec_indices_list: np.array
             Array of pixels on which you wish to average the galaxy density
         cosmology: class
-            cosmology class to use
+            Cosmology class to use
             
         Returns
         -------
@@ -569,10 +566,7 @@ class galaxy_catalog(object):
         ax: object
             Handle to the axis object
         '''
-        
-        
-        
-        gcp,bgp,inco=np.zeros([len(z),len(radec_indices_list)]),np.zeros([len(z),len(radec_indices_list)]),np.zeros([len(z),len(radec_indices_list)])
+        gcp,bgp,inco=np.zeros([len(z),len(radec_indices_list)],dtype=np.float32),np.zeros([len(z),len(radec_indices_list)],dtype=np.float32),np.zeros([len(z),len(radec_indices_list)],dtype=np.float32)
         
         for i,skypos in enumerate(radec_indices_list):
             gcp[:,i],bgp[:,i]=self.effective_galaxy_number_interpolant(z,skypos*np.ones_like(z).astype(int),cosmology)

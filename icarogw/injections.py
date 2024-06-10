@@ -1,14 +1,18 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn
 import copy as cp
 from .conversions import  radec2indeces
+import h5py
 
 # LVK Reviewed
 class injections(object):
-    def __init__(self,injections_dict,prior,ntotal,Tobs):
+    def __init__(self,injections_dict,prior,ntotal,Tobs,average=False):
 
         '''
         This class is used to manage a list of detected injections to calculate
         GW selection effects. This class uses injections which are given in source frame.
+        
+        cosmo_ref: class 
+            Cosmology class used to create the catalog
         injections_dict: xp.array
             Dictionary containing the variables with which you want to evaluate the injections.
         prior: xp.array
@@ -20,7 +24,7 @@ class injections(object):
         '''
         
         # Saves what you provided in the class
-        xp = get_module_array(prior)
+        xp=get_module_array(prior)
 
         self.injections_data_original={key:injections_dict[key] for key in injections_dict.keys()}
         self.injections_data={key:injections_dict[key] for key in injections_dict.keys()}
@@ -29,9 +33,11 @@ class injections(object):
         self.detection_index=xp.ones_like(prior,dtype=bool)
         self.ntotal=ntotal
         self.Tobs=Tobs
+        self.average=average
         
     def update_cut(self,detection_index):
-        ''' Update the selection cut and the injections that you are able to detect
+        ''' 
+        Update the selection cut and the injections that you are able to detect
         
         Parameters
         ----------
@@ -57,26 +63,26 @@ class injections(object):
         self.prior=cp2np(self.prior)
         
     def effective_injections_number(self):
-        ''' Get the effetive number of injections
-        '''
-        xp = get_module_array(self.log_weights)
-        sx = get_module_array_scipy(self.log_weights)
+        ''' Get the effetive number of injections'''
+        xp=get_module_array(self.log_weights)
+        sx=get_module_array_scipy(self.log_weights)
 
-        mean = xp.exp(sx.special.logsumexp(self.log_weights))/self.ntotal
-        var = xp.exp(sx.special.logsumexp(2*self.log_weights))/(self.ntotal**2)-(mean**2)/self.ntotal
+        mean=xp.exp(sx.special.logsumexp(self.log_weights))/self.ntotal
+        var=xp.exp(sx.special.logsumexp(2*self.log_weights))/(self.ntotal**2)-(mean**2)/self.ntotal
         return (mean**2)/var
     
     def pixelize(self,nside):
         self.nside=nside
-        self.injections_data_original['sky_indices'] = radec2indeces(
+        self.injections_data_original['sky_indices']=radec2indeces(
             cp2np(self.injections_data_original['right_ascension']),
             cp2np(self.injections_data_original['declination']),nside)
-        self.injections_data['sky_indices'] = radec2indeces(
+        self.injections_data['sky_indices']=radec2indeces(
             cp2np(self.injections_data['right_ascension']),
             cp2np(self.injections_data['declination']),nside)
         
         if isinstance(self.prior,np.ndarray):
             self.numpyfy()
+            
             
     def update_weights(self,rate_wrapper):
         '''
@@ -88,11 +94,12 @@ class injections(object):
         rate_wrapper: class
             Rate wrapper from the wrapper.py module, initialized with your desired population model.
         '''        
-        
-        self.log_weights = rate_wrapper.log_rate_injections(self.prior,**{key:self.injections_data[key] for key in rate_wrapper.injections_parameters})
-        xp = get_module_array(self.log_weights)
-        sx = get_module_array_scipy(self.log_weights)
-        self.pseudo_rate = xp.exp(sx.special.logsumexp(self.log_weights))/self.ntotal # Eq. 1.5 on the overleaf documentation
+        print("update_weights inj")
+        print(rate_wrapper.injections_parameters)
+        self.log_weights=rate_wrapper.log_rate_injections(self.prior,self.dNgaleff,**{key:self.injections_data[key] for key in rate_wrapper.injections_parameters})
+        xp=get_module_array(self.log_weights)
+        sx=get_module_array_scipy(self.log_weights)
+        self.pseudo_rate=xp.exp(sx.special.logsumexp(self.log_weights))/self.ntotal # Eq. 1.5 on the overleaf documentation
         
     def expected_number_detections(self):
         '''
@@ -107,7 +114,6 @@ class injections(object):
         
         Parameters
         ----------
-        
         Nsamp: int
             Samples to generate
         replace: bool
@@ -117,12 +123,31 @@ class injections(object):
         -------
         Dictionary of reweighted injections
         '''
-        xp = get_module_array(self.log_weights)
-        prob = xp.exp(self.log_weights)
+        xp=get_module_array(self.log_weights)
+        prob=xp.exp(self.log_weights)
         prob/=prob.sum()
-        idx = xp.random.choice(len(self.prior),replace=replace,p=prob,size=Nsamp)
+        idx=xp.random.choice(len(self.prior),replace=replace,p=prob,size=Nsamp)
         return {key:self.injections_data[key][idx] for key in list(self.injections_data.keys())}
+
+    
+    def calc_effective_galaxy_number_interpolant(self,cosmo_ref,catalog,injections_dict):
+        '''
+        Calculate the in-catalog and background contributions to the effective number of galaxies for each event.
         
+        Parameters
+        ----------
+        cosmo_ref: class 
+            Cosmology class used to create the catalog
+        catalog: class
+            Galaxy catalog class
+        injections_dict: dictionary
+            Dictionary of injections classes
+        '''
+        print("calc_effective_galaxy_number_interpolant")
         
-        
- 
+        kwargs={key:self.injections_data[key] for key in injections_dict.keys()}
+        z=cosmo_ref.dl2z(kwargs['luminosity_distance'])
+        skypos=self.injections_data['sky_indices']
+        dNgal_cat, dNgal_bg=catalog.effective_galaxy_number_interpolant(z,skypos,cosmo_ref,dl=kwargs['luminosity_distance'],average=self.average)
+        self.dNgaleff=dNgal_cat+dNgal_bg # Compute dNgaleff(z)
+        print("dNgaleff_inj =", self.dNgaleff)

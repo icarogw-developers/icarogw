@@ -362,18 +362,49 @@ class alphalog_astropycosmology(astropycosmology):
 
 # LVK Reviewed    
 class galaxy_MF(object):
-    def __init__(self,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None):
+    def __init__(self,evolving=False,cat_name=None,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None):
         '''
         A class to handle the Schechter function in absolute magnitude
         
         Parameters
         ----------
+        evolving: bool
+            Evolving or non-evolving self.sch_fun. By default False.
+        cat_name: string
+            GLADEplus, MICEcat, upGLADE. Others are not implemented.
         band: string
-            W1, K or bJ band. Others are not implemented
-        Mmin, Mmax,Mstar,alpha,phistar: float
+            Which bands are implemented depends on the catalog used.
+        Mmin,Mmax,Mstar,alpha,phistar: float
             Minimum, maximum absolute magnitude. Knee-absolute magnitude (for h=1), Powerlaw factor and galaxy number density per Gpc-3 
         '''
-        # Note, we convert phistar to Gpc-3
+        # Note, we convert phistar to Gpc-3 in the various init_catalog functions
+        self.evolving=evolving
+        
+        if cat_name is None:
+            try:
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=Mmin,Mmax,Mstar,alpha,phistar 
+            except Exception as e:
+                raise ValueError(f'Error encountered while initializing Schecter MF parameters: {str(e)}')
+        else:
+            if cat_name=='GLADEplus':
+                self.init_GLADEplus(band,Mmin,Mmax,Mstar,alpha,phistar)
+            if cat_name=='MICEcat':
+                self.init_MICEcat(band,Mmin,Mmax,Mstar,alpha,phistar)
+            if cat_name=='upGLADE':
+                self.init_upGLADE(band,Mmin,Mmax,Mstar,alpha,phistar)
+                
+    def init_GLADEplus(self,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None):
+        '''
+        Initialization for GladePlus catalog.
+        
+        Parameters
+        ----------
+        band: string
+            W1, K or bJ band. Others are not implemented.
+        Mmin,Mmax,Mstar,alpha,phistar: float
+            Minimum, maximum absolute magnitude. Knee-absolute magnitude (for h=1), Powerlaw factor and galaxy number density per Gpc-3 
+        '''
+        
         if band is None:
             self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=Mmin,Mmax,Mstar,alpha,phistar
         else:
@@ -385,26 +416,116 @@ class galaxy_MF(object):
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=-27.0, -19.0, -23.39, -1.09, 1.16e-2*1e9
             else:
                 raise ValueError('Band not known')
-    def build_MF(self,cosmology):
+        
+    def init_MICEcat(self,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None):
         '''
-        Build the Magnitude function
+        Initialization for the MICEcat catalog.
+        
+        Parameters
+        ----------
+        Mmin,Mmax,Mstar,alpha,phistar: float
+            Minimum, maximum absolute magnitude. Knee-absolute magnitude (for h=1), Powerlaw factor and galaxy number density per Gpc-3 
+        '''
+        
+        self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=Mmin,Mmax,Mstar,alpha,phistar
+        #how can implement redshift evolution? populate simulation according to the redshift-dependent Schechter fits, assume a non-evolving model and refit 
+           
+    def init_upGLADE(self,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None):
+        '''
+        Initialization for UpGlade catalog.
+        
+        Parameters
+        ----------
+        band: string
+            UpGlade bands: g, r, i, z, y, W1, W2, W3, W4 band. Only g is implemented for now.
+        Mmin,Mmax,Mstar,alpha,phistar: float
+            Minimum, maximum absolute magnitude. Knee-absolute magnitude (for h=1), Powerlaw factor and galaxy number density per Gpc-3 
+        '''
+        if band is None:
+            self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=Mmin,Mmax,Mstar,alpha,phistar
+        else:
+            if band=='g':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar=Mmin,Mmax,Mstar,alpha,phistar #fiducial_value of the g band at z=0
+                
+    # added those functions        
+    def evolving_Mstar(self,z,Q=0.42,z_fiducial=0):
+        '''
+        PQ parametrisation for the redshift evolution of the Magnitude function as defined in https://arxiv.org/pdf/astro-ph/9902249.pdf.
+        
+        Parameters
+        ----------
+        z_fiducial: float
+            Parametrisation-dependent (=0 for upglade).
+        
+        Returns
+        -------
+        '''
+        if self.evolving:
+            return self.Mstar-Q*(z-z_fiducial)
+        else:
+            return self.Mstar
+    
+    def evolving_phistar(self,z,P=-0.8):
+        '''
+        PQ parametrization for the redshift evolution of the Magnitude function as defined in https://arxiv.org/pdf/astro-ph/9902249.pdf.
+        
+        Parameters
+        ----------
+        
+        Returns
+        -------
+        '''
+        if self.evolving:
+            return self.phistar*10**(0.4*P*z)
+        else:
+            return self.phistar
+        return 
+        
+    #changed self.Mstar and self.phistar by evolving_
+    def build_MF(self,cosmology,z=None):
+        '''
+        Build the Magnitude function at redshift z.
         
         Parameters
         ----------
         cosmology: cosmology class
             cosmology class from the cosmology module
         '''
-        self.cosmology=cosmology
-        self.Mstarobs=self.Mstar+5*np.log10(cosmology.little_h)
-        self.Mminobs=self.Mmin+5*np.log10(cosmology.little_h)
-        self.Mmaxobs=self.Mmax+5*np.log10(cosmology.little_h)
+        print("build_MF")
         
-        self.phistarobs=self.phistar*np.power(cosmology.little_h,3.)
-        xmax=np.power(10.,0.4*(self.Mstarobs-self.Mminobs))
-        xmin=np.power(10.,0.4*(self.Mstarobs-self.Mmaxobs))
-        # Check if you need to replace this with a numerical integral.
-        self.norm=self.phistarobs*float(mpmath.gammainc(self.alpha+1,a=xmin,b=xmax))
+        if self.evolving:
+            if isinstance(z, type(None)):
+                print("cosmology.galaxy_MF.build_MF(self,cosmology,z=None) must take z as an argument in the evolving case")
+            else:
+                self.z=z
+                self.cosmology=cosmology
+                self.Mstarobs=self.evolving_Mstar(self.z)+5*np.log10(cosmology.little_h) if self.evolving else self.Mstar+5*np.log10(cosmology.little_h)
+                self.Mminobs=self.Mmin+5*np.log10(cosmology.little_h)
+                self.Mmaxobs=self.Mmax+5*np.log10(cosmology.little_h)
 
+                self.phistarobs=self.evolving_phistar(self.z)*np.power(cosmology.little_h,3.) if self.evolving else self.phistar*np.power(cosmology.little_h,3.)
+                xmax=np.power(10.,0.4*(self.Mstarobs-self.Mminobs))
+                xmin=np.power(10.,0.4*(self.Mstarobs-self.Mmaxobs))
+        
+                # Check if you need to replace this with a numerical integral.
+                self.norm=[] 
+                for i in range(len(self.z)): #redshift dependent MF
+                    self.norm.append(self.phistarobs[i]*float(mpmath.gammainc(self.alpha + 1, a=xmin[i], b=xmax[i])))
+                    
+        if not self.evolving:
+            self.cosmology=cosmology
+            self.Mstarobs=self.Mstar+5*np.log10(cosmology.little_h)
+            self.Mminobs=self.Mmin+5*np.log10(cosmology.little_h)
+            self.Mmaxobs=self.Mmax+5*np.log10(cosmology.little_h)
+
+            self.phistarobs=self.phistar*np.power(cosmology.little_h,3.)
+            xmax=np.power(10.,0.4*(self.Mstarobs-self.Mminobs))
+            xmin=np.power(10.,0.4*(self.Mstarobs-self.Mmaxobs))
+            
+            # Check if you need to replace this with a numerical integral.
+            self.norm=self.phistarobs*float(mpmath.gammainc(self.alpha+1,a=xmin,b=xmax))
+    
+    # add redshift dependence here
     def log_evaluate(self,M):
         '''
         Evluates the log of the Sch function
@@ -419,6 +540,7 @@ class galaxy_MF(object):
         log of the Sch function
         '''
         xp = get_module_array(M)
+        
         toret=xp.log(0.4*xp.log(10)*self.phistarobs)+ \
         ((self.alpha+1)*0.4*(self.Mstarobs-M))*xp.log(10.)-xp.power(10.,0.4*(self.Mstarobs-M))
         toret[(M<self.Mminobs) | (M>self.Mmaxobs)]=-xp.inf
@@ -490,35 +612,67 @@ class galaxy_MF(object):
         cdfeval[0]=0.
         randomcdf=np.random.rand(N)
         return np.interp(randomcdf,cdfeval,sarray,left=self.Mminobs,right=self.Mmaxobs)
-    
-    def build_effective_number_density_interpolant(self,epsilon):
+            
+    # added evolving vs non evolving case changed self.Mstar and self.phistar by evolving_ 
+    def build_effective_number_density_interpolant(self,epsilon,z=None):
         '''This method build the number density interpolant. This is defined as the integral from the Schecter function faint end to a value M_thr for the Schechter
         function times the luminosity weights. Note that this integral is done in x=Mstar-M, which is a cosmology independent quantity.
         
         Parameters
         ----------
+        z: array of floats
+            Redshift
         epsilon: float
             Powerlaw slope for the luminosity weights
         '''
+        print("build effective number density interpolant")
         
-        minv,maxv=self.Mmin,self.Mmax
-        self.epsilon=epsilon
-        Mvector_interpolant=np.linspace(minv,maxv,100)
-        self.effective_density_interpolant=np.zeros_like(Mvector_interpolant)
-        xmin=np.power(10.,0.4*(self.Mstar-maxv))
-        for i in range(len(Mvector_interpolant)):
-            xmax=np.power(10.,0.4*(self.Mstar-Mvector_interpolant[i]))
-            self.effective_density_interpolant[i]=float(mpmath.gammainc(self.alpha+1+epsilon,a=xmin,b=xmax))
+        minv, maxv = self.Mmin, self.Mmax
+        self.epsilon = epsilon
+        Mvector_interpolant = np.linspace(minv, maxv, 100)
         
-        self.effective_density_interpolant_cpu=self.effective_density_interpolant[::-1]
-        self.xvector_interpolant_cpu=self.Mstar-Mvector_interpolant[::-1]
-        
-        
-        if is_there_cupy():
-            self.effective_density_interpolant_gpu=np2cp(self.effective_density_interpolant[::-1])
-            self.xvector_interpolant_gpu=np2cp(self.Mstar-Mvector_interpolant[::-1])
-        
-    def background_effective_galaxy_density(self,Mthr):
+        # Evolving case
+        if self.evolving:
+            if isinstance(z, type(None)):
+                print("cosmology.galaxy_MF.build_effective_number_density_interpolant(self,epsilon,z=None) must take z as an argument in the evolving case")
+            else:
+                self.z = z
+                self.effective_density_interpolant = np.zeros_like(len(Mvector_interpolant),dtype=np.float32)
+                self.effective_density_interpolant_cpu = np.zeros((len(self.z), len(Mvector_interpolant)),dtype=np.float32)
+                self.effective_density_interpolant_gpu = np.zeros((len(self.z), len(Mvector_interpolant)),dtype=np.float32)
+                self.xvector_interpolant_cpu = np.zeros((len(self.z), len(Mvector_interpolant)),dtype=np.float32)
+                self.xvector_density_interpolant_gpu = np.zeros((len(self.z), len(Mvector_interpolant)),dtype=np.float32)
+
+                for i in range(len(self.z)):
+                    xmin = np.power(10., 0.4 * (self.evolving_Mstar(self.z)[i] - maxv))
+                    for j in range(len(Mvector_interpolant)):
+                        xmax = np.power(10., 0.4 * (self.evolving_Mstar(self.z)[i] - Mvector_interpolant[j]))
+                        self.effective_density_interpolant = float(mpmath.gammainc(self.alpha + 1 + epsilon, a=xmin, b=xmax))
+
+                    # Store results for each Mstar value
+                    self.effective_density_interpolant_cpu[i] = self.effective_density_interpolant
+                    self.xvector_interpolant_cpu[i] = self.evolving_Mstar(self.z)[i] - Mvector_interpolant[::-1]
+
+                    if is_there_cupy():
+                        self.effective_density_interpolant_gpu[i] = np2cp(self.effective_density_interpolant)
+                        self.xvector_interpolant_gpu[i] = np2cp(self.evolving_Mstar(self.z)[i] - Mvector_interpolant[::-1])
+                    
+        # Non-evolving case                
+        if not self.evolving:
+            self.effective_density_interpolant=np.zeros_like(Mvector_interpolant)
+            xmin=np.power(10.,0.4*(self.Mstar-maxv))
+            for i in range(len(Mvector_interpolant)):
+                xmax=np.power(10.,0.4*(self.Mstar-Mvector_interpolant[i]))
+                self.effective_density_interpolant[i]=float(mpmath.gammainc(self.alpha+1+epsilon,a=xmin,b=xmax))
+
+            self.effective_density_interpolant_cpu=self.effective_density_interpolant[::-1]
+            self.xvector_interpolant_cpu=self.Mstar-Mvector_interpolant[::-1]
+
+            if is_there_cupy():
+                self.effective_density_interpolant_gpu=np2cp(self.effective_density_interpolant[::-1])
+                self.xvector_interpolant_gpu=np2cp(self.Mstar-Mvector_interpolant[::-1])
+
+    def background_effective_galaxy_density_at_z(self,Mthr,z=None):
         '''Returns the effective galaxy density, i.e. dN_{gal,eff}/dVc, the effective number is given by the luminosity weights.
         This is Eq. 2.37 on the Overleaf documentation
         
@@ -527,22 +681,34 @@ class galaxy_MF(object):
         Mthr: xp.array
             Absolute magnitude threshold (faint) used to compute the integral
         '''
-        
-        origin=Mthr.shape
+        origin = Mthr.shape
         xp = get_module_array(Mthr)
-        ravelled=xp.ravel(self.Mstarobs-Mthr)
-        # Schecter function is 0 outside intervals that's why we set limit on boundaries
+        ravelled = xp.ravel(self.Mstarobs - Mthr)
+        # Schecter function is 0 outside intervals that's why we set limit on boundaries 
         
         if iscupy(Mthr):
-            xvector_interpolant=self.xvector_interpolant_gpu
-            effective_density_interpolant=self.effective_density_interpolant_gpu
+            xvector_interpolant = self.xvector_interpolant_gpu
+            effective_density_interpolant = self.effective_density_interpolant_gpu
         else:
-            xvector_interpolant=self.xvector_interpolant_cpu
-            effective_density_interpolant=self.effective_density_interpolant_cpu
-            
-        outp=self.phistarobs*xp.interp(ravelled,xvector_interpolant,effective_density_interpolant
-                           ,left=effective_density_interpolant[0],right=effective_density_interpolant[-1])
-        return xp.reshape(outp,origin)
+            xvector_interpolant = self.xvector_interpolant_cpu
+            effective_density_interpolant = self.effective_density_interpolant_cpu
+        
+        # Evolving case
+        if self.evolving:
+            if isinstance(z, type(None)):
+                print("cosmology.galaxy_MF.background_effective_galaxy_density_at_z(self,Mthr,z=None) must take z as an argument in the evolving case")
+            outp_arrays = np.zeros((len(z), len(Mthr)), dtype=np.float32) 
+            for i in range(len(z)):
+                outp=self.phistarobs * xp.interp(ravelled,xvector_interpolant[i],effective_density_interpolant[i],
+                                                 left=effective_density_interpolant[i][0],right=effective_density_interpolant[i][-1])
+                outp_arrays[i] = xp.reshape(outp,origin) # Just to be sure
+            return outp_arrays
+        
+        # Non-evolving case
+        if not self.evolving:
+            outp=self.phistarobs*xp.interp(ravelled,xvector_interpolant,effective_density_interpolant,
+                                           left=effective_density_interpolant[0],right=effective_density_interpolant[-1])
+            return xp.reshape(outp,origin)
 
 # LVK Reviewed
 class kcorr(object):

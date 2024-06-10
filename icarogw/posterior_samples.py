@@ -4,18 +4,52 @@ from .conversions import radec2indeces
 # LVK Reviewed
 class posterior_samples_catalog(object):
     
-    def __init__(self,posterior_samples_dict):
+    def __init__(self,cosmo_ref,catalog,posterior_samples_dict,rate_model,nparallel=None):
         '''
         A class to handle a list of posterior samples objects
         
         Parameters
         ----------
+        cosmo_ref: class 
+            Cosmology class used to create the catalog
+        cat: class
+            Galaxy catalog class
         posterior_samples_dict: dictionary
             Dictionary of posterior_samples classes
+        rate_model: class
+            Blabla
+        nparallel: int
+            Number of samples to use per event, if None it will use the maximum number of PE samples in common to all events
         '''
 
-        self.posterior_samples_dict = posterior_samples_dict
-        self.n_ev = len(posterior_samples_dict)
+        self.posterior_samples_dict=posterior_samples_dict
+        self.n_ev=len(posterior_samples_dict)
+
+        self.build_parallel_posterior(nparallel=nparallel)
+        self.calc_effective_galaxy_number_interpolant(cosmo_ref,catalog,rate_model)
+    
+    def calc_effective_galaxy_number_interpolant(self,cosmo_ref,catalog,rate_model):
+        '''
+        Calculate the in-catalog and background contribution to the effective number of galaxies for each event.
+        
+        Parameters
+        ----------
+        cosmo_ref: class 
+            Cosmology class used to create the catalog
+        catalog: class
+            Galaxy catalog class
+        rate_wrapper: class
+            Rate wrapper from the wrapper.py module, initialized with your desired population model.
+        
+        '''
+        print("calc_effective_galaxy_number_interpolant")
+        
+        kwargs={key:self.posterior_parallel[key] for key in rate_model.PEs_parameters}
+        z =cosmo_ref.dl2z(kwargs['luminosity_distance'])
+        skypos=kwargs['sky_indices']
+        dNgal_cat,dNgal_bg=catalog.effective_galaxy_number_interpolant(z,skypos,cosmo_ref,dl=kwargs['luminosity_distance'],average=False)
+        self.dNgaleff=dNgal_cat+dNgal_bg # Compute dNgaleff(z)
+        print("dNgaleff_PE =", self.dNgaleff)
     
     def build_parallel_posterior(self,nparallel=None):
         '''
@@ -26,7 +60,6 @@ class posterior_samples_catalog(object):
         nparallal: int
             Number of posterior samples to select, if None it will select the maximum common number
         '''
-        
         
         # Saves the minimum number of samples to use per event
         nsamps=np.array([self.posterior_samples_dict[key].nsamples for key in self.posterior_samples_dict.keys()])
@@ -39,19 +72,20 @@ class posterior_samples_catalog(object):
         llev=list(self.posterior_samples_dict.keys()) # Name of events
         print('Using {:d} samples from each {:d} posteriors'.format(self.nparallel,self.n_ev))
         
-        key = list(self.posterior_samples_dict[llev[0]].posterior_data.keys())[0]
-        xp = get_module_array(self.posterior_samples_dict[llev[0]].posterior_data[key])
+        key=list(self.posterior_samples_dict[llev[0]].posterior_data.keys())[0]
+        xp=get_module_array(self.posterior_samples_dict[llev[0]].posterior_data[key])
         
         self.posterior_parallel={key:xp.empty([self.n_ev,self.nparallel],
                                               dtype=self.posterior_samples_dict[llev[0]].posterior_data[key].dtype) for key in self.posterior_samples_dict[llev[0]].posterior_data.keys()}
 
         # Saves the posterior samples in a dictionary containing events on rows and posterior samples on columns
         for i,event in enumerate(list(self.posterior_samples_dict.keys())):
-            len_single = self.posterior_samples_dict[event].nsamples
-            rand_perm = xp.random.permutation(len_single)
+            len_single=self.posterior_samples_dict[event].nsamples
+            rand_perm=xp.random.permutation(len_single)
             for key in self.posterior_parallel.keys():
                 self.posterior_parallel[key][i,:]=self.posterior_samples_dict[event].posterior_data[key][rand_perm[:self.nparallel]]
             self.posterior_samples_dict[event].numpyfy() # Big data is forced to be on CPU
+
             
     def cupyfy(self):
         ''' Converts all the posterior samples to cupy'''
@@ -68,16 +102,14 @@ class posterior_samples_catalog(object):
         
         Parameters
         ----------
-        
         rate_wrapper: class
             Rate wrapper from the wrapper.py module, initialized with your desired population model.
         '''
-
-        self.log_weights = rate_wrapper.log_rate_PE(self.posterior_parallel['prior'],
-                                                    **{key:self.posterior_parallel[key] for key in rate_wrapper.PEs_parameters})
-        xp = get_module_array(self.log_weights)
-        sx = get_module_array_scipy(self.log_weights)
-        kk = list(self.posterior_parallel.keys())[0]
+        print("update_weights PE")
+        self.log_weights=rate_wrapper.log_rate_PE(self.posterior_parallel['prior'],self.dNgaleff,**{key:self.posterior_parallel[key] for key in rate_wrapper.PEs_parameters})
+        xp=get_module_array(self.log_weights)
+        sx=get_module_array_scipy(self.log_weights)
+        kk=list(self.posterior_parallel.keys())[0]
         self.sum_weights=xp.exp(sx.special.logsumexp(self.log_weights,axis=1))/self.nparallel
         self.sum_weights_squared= xp.exp(sx.special.logsumexp(2*self.log_weights,axis=1))/xp.power(self.nparallel,2.)
         
@@ -87,7 +119,7 @@ class posterior_samples_catalog(object):
         '''
         
         # Check for the number of effective sample (Eq. 2.73 document)
-        xp = get_module_array(self.sum_weights)
+        xp=get_module_array(self.sum_weights)
         Neff_vect=xp.power(self.sum_weights,2.)/self.sum_weights_squared        
         Neff_vect[xp.isnan(Neff_vect)]=0.
         return Neff_vect
@@ -121,7 +153,7 @@ class posterior_samples_catalog(object):
         -------
         Dictionary of dictionaries containig PE
         '''
-        name_ev = list(self.posterior_samples_dict.keys())
+        name_ev=list(self.posterior_samples_dict.keys())
         return {key:self.posterior_dict[key].reweight_PE(rate_wrapper,Nsamp,replace=replace) for key in name_ev}
 
 # LVK Reviewed
@@ -138,6 +170,7 @@ class posterior_samples(object):
             Prior to use in order to reweight posterior samples written in the same variables that you provide, e.g. if you provide d_l and m1d, then p(d_l,m1d)
         '''
         self.posterior_data={key: posterior_dict[key] for key in posterior_dict.keys()}
+        self.event_parameters = posterior_dict.keys()
         self.posterior_data['prior']=prior
         self.nsamples=len(prior)
         
@@ -150,7 +183,7 @@ class posterior_samples(object):
         nside: integer
             Nside for healpy
         '''
-        self.posterior_data['sky_indices'] = radec2indeces(self.posterior_data['right_ascension'],self.posterior_data['declination'],nside)
+        self.posterior_data['sky_indices']=radec2indeces(self.posterior_data['right_ascension'],self.posterior_data['declination'],nside)
         self.nside=nside
         
     def cupyfy(self):
@@ -177,12 +210,12 @@ class posterior_samples(object):
         dec: float
             declination of the EM counterpart in radians.
         '''
-        xp = get_module_array(ra)
-        idx = radec2indeces(ra,dec,self.nside)
-        select = xp.where(self.posterior_data['sky_indices']==idx)[0]
+        xp=get_module_array(ra)
+        idx=radec2indeces(ra,dec,self.nside)
+        select=xp.where(self.posterior_data['sky_indices']==idx)[0]
         print('There are {:d} samples in the EM counterpart direction'.format(len(select)))
         self.posterior_data={key: self.posterior_data[key] for key in self.posterior_data.keys()}
-        self.posterior_data['z_EM'] = z_EM
+        self.posterior_data['z_EM']=z_EM
         self.nsamples=len(self.posterior_data['sky_indices'])
         
     def reweight_PE(self,rate_wrapper,Nsamp,replace=True):
@@ -202,10 +235,10 @@ class posterior_samples(object):
         -------
         Dictionary containing the reweighted PE
         '''
-        
-        logw = rate_wrapper.log_rate_PE(**{key:self.posterior_data[key] for key in self.posterior_data.keys()})
-        xp = get_module_array(logw)
-        prob = xp.exp(logw)
+        print("reweight PE")
+        logw=rate_wrapper.log_rate_PE(**{key:self.posterior_data[key] for key in self.posterior_data.keys()})
+        xp=get_module_array(logw)
+        prob=xp.exp(logw)
         prob/=prob.sum()
-        idx = xp.random.choice(len(self.posterior_data['prior']),replace=replace,p=prob)
+        idx=xp.random.choice(len(self.posterior_data['prior']),replace=replace,p=prob)
         return {key:self.posterior_data[key][idx] for key in list(self.posterior_data.keys())}

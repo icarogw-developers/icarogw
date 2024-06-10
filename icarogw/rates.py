@@ -430,7 +430,7 @@ class CBC_vanilla_EM_counterpart(object):
         # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
         log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
         -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z)
-        
+        s
         if self.sw is not None:
             log_weights+=self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
             
@@ -855,8 +855,9 @@ class CBC_catalog_vanilla_rate(object):
         if not self.scale_free:
             
             self.Rgal = kwargs['Rgal']
+
         
-    def log_rate_PE(self,prior,**kwargs):
+    def log_rate_PE(self,prior,dNgaleff,**kwargs):
         '''
         This method calculates the weights (CBC merger rate per year at detector) for the posterior samples.
         
@@ -864,19 +865,17 @@ class CBC_catalog_vanilla_rate(object):
         ----------
         prior: array
             Prior written in terms of the variables identified by self.event_parameters
+        dNgaleff: array
+            Effective number density of galaxies (Eq. 2.19 on the overleaf document)
         kwargs: flags
             The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
         '''
+        print("log rate PE")
         xp = get_module_array(prior)
         
         ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
-        dNgal_cat,dNgal_bg=self.catalog.effective_galaxy_number_interpolant(z,kwargs['sky_indices'],self.cw.cosmology
-                                                    ,dl=kwargs['luminosity_distance'],average=False)
 
-        # Effective number density of galaxies (Eq. 2.19 on the overleaf document)
-        dNgaleff=dNgal_cat+dNgal_bg
-        
-        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document        
         log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(dNgaleff) \
         -xp.log1p(z)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log(prior)
         
@@ -890,7 +889,7 @@ class CBC_catalog_vanilla_rate(object):
             
         return log_out
     
-    def log_rate_injections(self,prior,**kwargs):
+    def log_rate_injections(self,prior,dNgaleff,**kwargs):
         '''
         This method calculates the weights (CBC merger rate per year at detector) for the injections.
         
@@ -898,20 +897,18 @@ class CBC_catalog_vanilla_rate(object):
         ----------
         prior: array
             Prior written in terms of the variables identified by self.event_parameters
+        dNgaleff: array
+            Effective number density of galaxies (Eq. 2.19 on the overleaf document)
         kwargs: flags
             The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
         '''
+        print("log rate inj")
         xp = get_module_array(prior)
         
         ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
-        dNgal_cat,dNgal_bg=self.catalog.effective_galaxy_number_interpolant(z,kwargs['sky_indices'],self.cw.cosmology
-                                                    ,dl=kwargs['luminosity_distance'],average=self.average)
-
-        # Effective number density of galaxies (Eq. 2.19 on the overleaf document)
-        dNgaleff=dNgal_cat+dNgal_bg
         
         # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
-        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(dNgaleff) \
+        log_weights=self.mw.log_pdf(ms1)+self.rw.rate.log_evaluate(z)+xp.log(dNgaleff) \
         -xp.log1p(z)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log(prior)
         
         if self.sw is not None:
