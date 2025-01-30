@@ -1,5 +1,5 @@
 from .cupy_pal import get_module_array, get_module_array_scipy, iscupy, np, check_bounds_1D
-from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology
+from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, wIDE1
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, PL_normfact, PL_normfact_z
 from .priors import  PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
@@ -66,6 +66,13 @@ class FlatwCDM_wrap(object):
         self.astropycosmo=FlatwCDM
     def update(self,**kwargs):
         self.cosmology.build_cosmology(self.astropycosmo(**kwargs))
+
+class wIDE1_wrap(object):
+    def __init__(self, zmax):
+        self.population_parameters = ['H0', 'Om0', 'w0', 'xi']
+        self.cosmology = wIDE1(zmax)
+    def update(self, **kwargs):
+        self.cosmology.build_cosmology(**kwargs)
 
 # LVK Reviewed
 class Xi0_mod_wrap(object):

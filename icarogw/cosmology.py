@@ -215,7 +215,15 @@ class base_cosmology(object):
         cdf[0]=0.
         cdf_samps=np.random.rand(Nsamp)
         return np.interp(cdf_samps,cdf,zproxy)
-    
+
+class wIDE1(base_cosmology):
+    def build_cosmology(self, H0, Om0, w0, xi):
+        
+        self.log10_dVc_dzdOmega_cpu = self.z_cpu
+        self.log10_Vc_cpu = self.z_cpu
+        self.log10_dl_at_z_cpu = self.z_cpu
+        self.log10_ddl_by_dz_cpu = self.z_cpu
+
 # LVK Reviewed
 class astropycosmology(base_cosmology):
     def  build_cosmology(self,astropy_cosmo):
