@@ -1,8 +1,9 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, is_there_cupy
 from icarogw import cupy_pal
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumtrapz, quad
 import mpmath
 import scipy.stats, scipy.misc
+from numbers import Number
 
 COST_C= 299792.458 # Speed of light in km/s
 
@@ -216,13 +217,56 @@ class base_cosmology(object):
         cdf_samps=np.random.rand(Nsamp)
         return np.interp(cdf_samps,cdf,zproxy)
 
-class wIDE1(base_cosmology):
-    def build_cosmology(self, H0, Om0, w0, xi):
-        
-        self.log10_dVc_dzdOmega_cpu = self.z_cpu
-        self.log10_Vc_cpu = self.z_cpu
-        self.log10_dl_at_z_cpu = self.z_cpu
-        self.log10_ddl_by_dz_cpu = self.z_cpu
+
+class MyCosmology(base_cosmology):
+
+    def set_cosmo_pars(self, **kwargs):
+        self.cosmo_pars = kwargs
+        self.hubble_distance = COST_C / self.cosmo_pars['H0'] # results in Mpc
+
+    def inv_efunc(self, z):
+        """To be overwritten by higher level class"""
+        return np.power(1+z, 3./2.)
+
+    def comoving_distance(self, z):
+        if not isinstance(z, (Number, np.generic)):  # array/Quantity    
+            res = np.array( [ quad(self.inv_efunc, 0, z, )[0] ] )
+            return self.hubble_distance * res
+        else: 
+            return self.hubble_distance * quad(self.inv_efunc, 0, z, )[0]
+
+    def luminosity_distance(self, z):
+        return (1+z) * self.comoving_distance(z)
+
+    def differential_luminosity_distance(self, z):
+        return self.comoving_distance(z) + self.hubble_distance * (1+z) * self.inv_efunc(z)
+
+    def comoving_volume(self, z):
+        return 4 * np.pi * (1./3.) * np.power(self.comoving_distance(z), 3)
+
+    def differential_comoving_volume(self, z):
+        return self.hubble_distance * self.inv_efunc(z) * np.power(self.comoving_distance(z), 2)
+
+    def build_cosmology(self):
+        self.log10_dVc_dzdOmega_cpu = np.log10( self.differential_comoving_volume(self.z_cpu) ) - 9. # Conversion from Mpc to Gpc
+        self.log10_Vc_cpu = np.log10( self.comoving_volume(self.z_cpu) ) - 9. # Conversion to Gpc
+        self.log10_dl_at_z_cpu = np.log10( self.luminosity_distance(self.z_cpu) )
+        self.log10_ddl_by_dz_cpu = np.log10( self.differential_luminosity_distance(self.z_cpu) )
+
+
+class wIDE1(MyCosmology):
+
+    def inv_efunc(self, z):
+        """
+        Returns the E(z) = H(z)/H_0 function for a cosmology including 
+        DE with cst e.o.s + DM + interacting term Q = 3 xi confH rho_de
+        """
+        coef_z_3 = (self.cosmo_pars['w0'] * self.cosmo_pars['Om0'] + self.cosmo_pars['xi']) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
+        coef_z_3w0pxip1 = (self.cosmo_pars['w0'] * (1 - self.cosmo_pars['Om0'])) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
+        w0pxip1 =  self.cosmo_pars['w0'] + self.cosmo_pars['xi'] + 1.
+        zp1 = self.z_cpu + 1.
+        return np.power( coef_z_3 * np.power(zp1, 3) + coef_z_3w0pxip1 * np.power(zp1, 3*w0pxip1), -0.5)
+
 
 # LVK Reviewed
 class astropycosmology(base_cosmology):
