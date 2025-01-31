@@ -230,10 +230,10 @@ class MyCosmology(base_cosmology):
 
     def comoving_distance(self, z):
         if not isinstance(z, (Number, np.generic)):  # array/Quantity    
-            res = np.array( [ quad(self.inv_efunc, 0, z, )[0] ] )
+            res = np.array( [ quad(self.inv_efunc, 0, _z)[0] for _z in z ] )
             return self.hubble_distance * res
         else: 
-            return self.hubble_distance * quad(self.inv_efunc, 0, z, )[0]
+            return self.hubble_distance * quad(self.inv_efunc, 0, z)[0]
 
     def luminosity_distance(self, z):
         return (1+z) * self.comoving_distance(z)
@@ -264,7 +264,7 @@ class wIDE1(MyCosmology):
         coef_z_3 = (self.cosmo_pars['w0'] * self.cosmo_pars['Om0'] + self.cosmo_pars['xi']) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
         coef_z_3w0pxip1 = (self.cosmo_pars['w0'] * (1 - self.cosmo_pars['Om0'])) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
         w0pxip1 =  self.cosmo_pars['w0'] + self.cosmo_pars['xi'] + 1.
-        zp1 = self.z_cpu + 1.
+        zp1 = z + 1.
         return np.power( coef_z_3 * np.power(zp1, 3) + coef_z_3w0pxip1 * np.power(zp1, 3*w0pxip1), -0.5)
 
 
