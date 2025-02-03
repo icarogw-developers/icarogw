@@ -222,11 +222,14 @@ class MyCosmology(base_cosmology):
 
     def set_cosmo_pars(self, **kwargs):
         self.cosmo_pars = kwargs
-        self.hubble_distance = COST_C / self.cosmo_pars['H0'] # results in Mpc
+        if 'H0' in self.cosmo_pars:
+            self.hubble_distance = COST_C / self.cosmo_pars['H0'] # results in Mpc
+        else: 
+            self.hubble_distance = COST_C / 70. # Default value. H0 should be a parameter of most of the cosmological models anyway.
 
     def inv_efunc(self, z):
         """To be overwritten by higher level class"""
-        return np.power(1+z, 3./2.)
+        return np.power(1+z, -3./2.)
 
     def comoving_distance(self, z):
         if not isinstance(z, (Number, np.generic)):  # array/Quantity    

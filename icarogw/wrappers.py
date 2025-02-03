@@ -69,7 +69,7 @@ class FlatwCDM_wrap(object):
 
 class wIDE1_wrap(object):
     def __init__(self, zmax):
-        self.populaqtion_parameters = ['H0', 'Om0', 'w0', 'xi']
+        self.population_parameters = ['H0', 'Om0', 'w0', 'xi']
         self.cosmology = wIDE1(zmax)
     def update(self, **kwargs):
         self.cosmology.set_cosmo_pars(**kwargs)
