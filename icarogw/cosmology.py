@@ -718,20 +718,16 @@ class Gaussian_rate(basic_redshift_rate):
     '''
     Class for a truncated Gaussian redshift rate
     '''
-    def __init__(self, mu, sigma, amp):
-        self.mu    = mu
-        self.sigma = sigma
-        self.amp   = amp
-    
-    def log_pdf(self,z):
-        xp = get_module_array(z)
-        a, b = -self.mu / self.sigma, (np.inf - self.mu) / self.sigma 
-        gaussian = xp.log( scipy.stats.truncnorm.pdf(z, a, b, loc = self.mu, scale = self.sigma) )
-        return gaussian
+    def __init__(self, mu_r, sigma_r, amp_r):
+        self.mu_r    = mu_r
+        self.sigma_r = sigma_r
+        self.amp_r   = amp_r
     
     def log_evaluate(self,z):
         xp = get_module_array(z)
-        return self.amp * xp.exp(self.log_pdf(z))
+        a, b = -self.mu_r / self.sigma_r, (np.inf - self.mu_r) / self.sigma_r
+        log_gaussian = xp.log( scipy.stats.truncnorm.pdf(z, a, b, loc = self.mu_r, scale = self.sigma_r) )
+        return xp.log(self.amp_r) + log_gaussian
 
 # LVK Reviewed
 class basic_absM_rate(object):
