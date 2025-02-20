@@ -243,20 +243,24 @@ class MyCosmology(base_cosmology):
         return res
 
     def luminosity_distance(self, z, from_scratch=True):
-        if from_scratch: return (1+z) * self.comoving_distance(z)
-        else: return (1+z) * self._comoving_distance
+        if from_scratch: dc = self.comoving_distance(z)
+        else: dc = self._comoving_distance
+        return (1+z) * dc
 
     def differential_luminosity_distance(self, z, from_scratch=True):
-        if from_scratch: return self.comoving_distance(z) + self.hubble_distance * (1+z) * self.inv_efunc(z)
-        else: return self._comoving_distance + self.hubble_distance * (1+z) * self._inv_efunc
+        if from_scratch: dc, inv_e = self.comoving_distance(z), self.inv_efunc(z)
+        else: dc, inv_e = self._comoving_distance, self._inv_efunc
+        return dc + self.hubble_distance * (1+z) * inv_e
 
     def comoving_volume(self, z, from_scratch=True):
-        if from_scratch: return 4 * np.pi * (1./3.) * np.power(self.comoving_distance(z), 3)
-        else: return 4 * np.pi * (1./3.) * np.power(self._comoving_distance, 3)
+        if from_scratch: dc = self.comoving_distance(z)
+        else: dc = self._comoving_distance
+        return 4 * np.pi * (1./3.) * np.power(dc, 3)
 
     def differential_comoving_volume(self, z, from_scratch=True):
-        if from_scratch: return self.hubble_distance * self.inv_efunc(z) * np.power(self.comoving_distance(z), 2)
-        else: return self.hubble_distance * self._inv_efunc * np.power(self._comoving_distance, 2)
+        if from_scratch: dc, inv_e = self.comoving_distance(z), self.inv_efunc(z)
+        else: dc, inv_e = self._comoving_distance, self._inv_efunc
+        return self.hubble_distance * inv_e * np.power(dc, 2)
 
     def build_cosmology(self, store_esqr=False):
         if store_esqr: self.esqrfunc( self.z_cpu, store=True )
