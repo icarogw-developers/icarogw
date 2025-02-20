@@ -227,48 +227,74 @@ class MyCosmology(base_cosmology):
         else: 
             self.hubble_distance = COST_C / 70. # Default value. H0 should be a parameter of most of the cosmological models anyway.
 
-    def inv_efunc(self, z):
+    def inv_efunc(self, z, store=False):
         """To be overwritten by higher level class"""
-        return np.power(1+z, -3./2.)
+        res = np.power(1+z, -3./2.)
+        if store: self._inv_efunc = res
+        return res
 
-    def comoving_distance(self, z):
+    def comoving_distance(self, z, store=False):
         if not isinstance(z, (Number, np.generic)):  # array/Quantity    
-            res = np.array( [ quad(self.inv_efunc, 0, _z)[0] for _z in z ] )
-            return self.hubble_distance * res
+            comoving_distance_scalar = np.array( [ quad(self.inv_efunc, 0, _z)[0] for _z in z ] )
+            res = self.hubble_distance * comoving_distance_scalar
         else: 
-            return self.hubble_distance * quad(self.inv_efunc, 0, z)[0]
+            res = self.hubble_distance * quad(self.inv_efunc, 0, z)[0]
+        if store: self._comoving_distance = res
+        return res
 
-    def luminosity_distance(self, z):
-        return (1+z) * self.comoving_distance(z)
+    def luminosity_distance(self, z, from_scratch=True):
+        if from_scratch: return (1+z) * self.comoving_distance(z)
+        else: return (1+z) * self._comoving_distance
 
-    def differential_luminosity_distance(self, z):
-        return self.comoving_distance(z) + self.hubble_distance * (1+z) * self.inv_efunc(z)
+    def differential_luminosity_distance(self, z, from_scratch=True):
+        if from_scratch: return self.comoving_distance(z) + self.hubble_distance * (1+z) * self.inv_efunc(z)
+        else: return self._comoving_distance + self.hubble_distance * (1+z) * self._inv_efunc
 
-    def comoving_volume(self, z):
-        return 4 * np.pi * (1./3.) * np.power(self.comoving_distance(z), 3)
+    def comoving_volume(self, z, from_scratch=True):
+        if from_scratch: return 4 * np.pi * (1./3.) * np.power(self.comoving_distance(z), 3)
+        else: return 4 * np.pi * (1./3.) * np.power(self._comoving_distance, 3)
 
-    def differential_comoving_volume(self, z):
-        return self.hubble_distance * self.inv_efunc(z) * np.power(self.comoving_distance(z), 2)
+    def differential_comoving_volume(self, z, from_scratch=True):
+        if from_scratch: return self.hubble_distance * self.inv_efunc(z) * np.power(self.comoving_distance(z), 2)
+        else: return self.hubble_distance * self._inv_efunc * np.power(self._comoving_distance, 2)
 
-    def build_cosmology(self):
-        self.log10_dVc_dzdOmega_cpu = np.log10( self.differential_comoving_volume(self.z_cpu) ) - 9. # Conversion from Mpc to Gpc
-        self.log10_Vc_cpu = np.log10( self.comoving_volume(self.z_cpu) ) - 9. # Conversion to Gpc
-        self.log10_dl_at_z_cpu = np.log10( self.luminosity_distance(self.z_cpu) )
-        self.log10_ddl_by_dz_cpu = np.log10( self.differential_luminosity_distance(self.z_cpu) )
+    def build_cosmology(self, store_esqr=False):
+        if store_esqr: self.esqrfunc( self.z_cpu, store=True )
+        self.inv_efunc( self.z_cpu, store=True )
+        self.comoving_distance( self.z_cpu, store=True )
+        self.log10_dVc_dzdOmega_cpu = np.log10( self.differential_comoving_volume(self.z_cpu, from_scratch=False) ) - 9. # Conversion from Mpc to Gpc
+        self.log10_Vc_cpu = np.log10( self.comoving_volume(self.z_cpu, from_scratch=False) ) - 9. # Conversion to Gpc
+        self.log10_dl_at_z_cpu = np.log10( self.luminosity_distance(self.z_cpu, from_scratch=False) )
+        self.log10_ddl_by_dz_cpu = np.log10( self.differential_luminosity_distance(self.z_cpu, from_scratch=False) )
 
 
 class wIDE1(MyCosmology):
 
-    def inv_efunc(self, z):
+    def inv_efunc(self, z, store=False):
         """
-        Returns the E(z) = H(z)/H_0 function for a cosmology including 
+        Returns the 1/E(z) = H(z)/H0 function for a cosmology including 
         DE with cst e.o.s + DM + interacting term Q = 3 xi confH rho_de
         """
         coef_z_3 = (self.cosmo_pars['w0'] * self.cosmo_pars['Om0'] + self.cosmo_pars['xi']) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
         coef_z_3w0pxip1 = (self.cosmo_pars['w0'] * (1 - self.cosmo_pars['Om0'])) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
         w0pxip1 =  self.cosmo_pars['w0'] + self.cosmo_pars['xi'] + 1.
         zp1 = z + 1.
-        return np.power( coef_z_3 * np.power(zp1, 3) + coef_z_3w0pxip1 * np.power(zp1, 3*w0pxip1), -0.5)
+        res = np.power( coef_z_3 * np.power(zp1, 3) + coef_z_3w0pxip1 * np.power(zp1, 3*w0pxip1), -0.5)
+        if store: self._inv_efunc = res
+        return res
+
+    def esqrfunc(self, z, store=False):
+        """
+        Returns the E(z)^2 = H(z)^2/H0^2 function for a cosmology including 
+        DE with cst e.o.s + DM + interacting term Q = 3 xi confH rho_de
+        """
+        coef_z_3 = (self.cosmo_pars['w0'] * self.cosmo_pars['Om0'] + self.cosmo_pars['xi']) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
+        coef_z_3w0pxip1 = (self.cosmo_pars['w0'] * (1 - self.cosmo_pars['Om0'])) / (self.cosmo_pars['w0'] + self.cosmo_pars['xi'])
+        w0pxip1 =  self.cosmo_pars['w0'] + self.cosmo_pars['xi'] + 1.
+        zp1 = z + 1.
+        res = coef_z_3 * np.power(zp1, 3) + coef_z_3w0pxip1 * np.power(zp1, 3*w0pxip1)
+        if store: self._esqrfunc = res
+        return res
 
 
 # LVK Reviewed

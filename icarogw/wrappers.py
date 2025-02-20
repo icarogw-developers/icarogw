@@ -71,9 +71,9 @@ class wIDE1_wrap(object):
     def __init__(self, zmax):
         self.population_parameters = ['H0', 'Om0', 'w0', 'xi']
         self.cosmology = wIDE1(zmax)
-    def update(self, **kwargs):
+    def update(self, store_esqr=False, **kwargs):
         self.cosmology.set_cosmo_pars(**kwargs)
-        self.cosmology.build_cosmology()
+        self.cosmology.build_cosmology(store_esqr=store_esqr)
 
 # LVK Reviewed
 class Xi0_mod_wrap(object):
