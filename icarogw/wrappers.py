@@ -1,6 +1,6 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, check_bounds_1D
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
-from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
+from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line, Gaussian_rate
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, PL_normfact, PL_normfact_z
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import _mixed_double_sigmoid_function, _mixed_linear_function, _mixed_linear_sinusoid_function, BrokenPowerLawMultiPeak
@@ -48,6 +48,12 @@ class rateevolution_beta_line(rate_default):
         self.population_parameters=['a','b','c','d']
     def update(self,**kwargs):
         self.rate=beta_rate_line(**kwargs)
+
+class rateevolution_Gaussian(rate_default):
+    def __init__(self):
+        self.population_parameters=['mu_r','sigma_r','amp_r']
+    def update(self,**kwargs):
+        self.rate=Gaussian_rate(**kwargs)
 
 # LVK Reviewed
 class FlatLambdaCDM_wrap(object):

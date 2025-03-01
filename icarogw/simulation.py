@@ -254,6 +254,7 @@ def generate_mass_inj(Nsamp,mass_model,dic_param):
 
     elif mass_model =='MultiPeak':
         mp = massprior_MultiPeak()
+        mp = m1m2_conditioned(mp)
         mp.update(alpha=dic_param['alpha'],beta=dic_param['beta'],mmin=dic_param['mmin'],mmax=dic_param['mmax'],delta_m=dic_param['delta_m'],
         mu_g_low=dic_param['mu_g_low'],sigma_g_low=dic_param['sigma_g_low'],lambda_g_low=dic_param['lambda_g_low'],
         mu_g_high=dic_param['mu_g_high'],sigma_g_high=dic_param['sigma_g_high'],lambda_g=dic_param['lambda_g'])
