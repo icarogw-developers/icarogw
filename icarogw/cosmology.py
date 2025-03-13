@@ -225,7 +225,7 @@ class MyCosmology(base_cosmology):
         if 'H0' in self.cosmo_pars:
             self.hubble_distance = COST_C / self.cosmo_pars['H0'] # results in Mpc
         else: 
-            self.hubble_distance = COST_C / 70. # Default value. H0 should be a parameter of most of the cosmological models anyway.
+            self.hubble_distance = COST_C / 67.7 # Default value. H0 should be a parameter of most of the cosmological models anyway.
 
     def inv_efunc(self, z, store=False):
         """To be overwritten by higher level class"""
@@ -272,7 +272,7 @@ class MyCosmology(base_cosmology):
         self.log10_ddl_by_dz_cpu = np.log10( self.differential_luminosity_distance(self.z_cpu, from_scratch=False) )
 
 
-class wIDE1(MyCosmology):
+class wIDS_linDE(MyCosmology):
 
     def inv_efunc(self, z, store=False):
         """
