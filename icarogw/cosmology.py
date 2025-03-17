@@ -1,6 +1,6 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, is_there_cupy
 from icarogw import cupy_pal
-from scipy.integrate import cumulative_trapezoid
+from scipy.integrate import cumulative_trapezoid, quad
 import mpmath
 import scipy.stats, scipy.misc
 from numbers import Number
