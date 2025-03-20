@@ -71,9 +71,9 @@ class wIDS_linDE_wrap(object):
     def __init__(self, zmax):
         self.population_parameters = ['H0', 'Om0', 'w0', 'xi']
         self.cosmology = wIDS_linDE(zmax)
-    def update(self, store_esqr=False, **kwargs):
+    def update(self, store_esqr=False, quad=False, **kwargs):
         self.cosmology.set_cosmo_pars(**kwargs)
-        self.cosmology.build_cosmology(store_esqr=store_esqr)
+        self.cosmology.build_cosmology(store_esqr=store_esqr, quad=quad)
 
 class Flatw0waCDM_wrap(object):
     def __init__(self,zmax):

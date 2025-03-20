@@ -233,13 +233,19 @@ class MyCosmology(base_cosmology):
         if store: self._inv_efunc = res
         return res
 
-    def comoving_distance(self, z, store=False):
-        if not isinstance(z, (Number, np.generic)):  # array/Quantity    
-            comoving_distance_scalar = np.array( [ quad(self.inv_efunc, 0, _z)[0] for _z in z ] )
+    def comoving_distance(self, z, store=False, build_cosmology=False):
+        if build_cosmology:
+            self.inv_efunc(z, store=True)
+            comoving_distance_scalar = cumulative_trapezoid(self._inv_efunc, x=z, initial=0.)
             res = self.hubble_distance * comoving_distance_scalar
-        else: 
-            res = self.hubble_distance * quad(self.inv_efunc, 0, z)[0]
-        if store: self._comoving_distance = res
+            if store: self._comoving_distance = res
+        else:
+            if not isinstance(z, (Number, np.generic)):  # array/Quantity    
+                comoving_distance_scalar = np.array( [ quad(self.inv_efunc, 0, _z)[0] for _z in z ] )
+                res = self.hubble_distance * comoving_distance_scalar
+            else: 
+                res = self.hubble_distance * quad(self.inv_efunc, 0, z)[0]
+            if store: self._comoving_distance = res
         return res
 
     def luminosity_distance(self, z, from_scratch=True):
@@ -262,10 +268,13 @@ class MyCosmology(base_cosmology):
         else: dc, inv_e = self._comoving_distance, self._inv_efunc
         return self.hubble_distance * inv_e * np.power(dc, 2)
 
-    def build_cosmology(self, store_esqr=False):
+    def build_cosmology(self, store_esqr=False, quad=False):
         if store_esqr: self.esqrfunc( self.z_cpu, store=True )
-        self.inv_efunc( self.z_cpu, store=True )
-        self.comoving_distance( self.z_cpu, store=True )
+        if quad: 
+            self.inv_efunc( self.z_cpu, store=True )
+            self.comoving_distance( self.z_cpu, store=True )
+        else:
+            self.comoving_distance( self.z_cpu, store=True, build_cosmology=True )
         self.log10_dVc_dzdOmega_cpu = np.log10( self.differential_comoving_volume(self.z_cpu, from_scratch=False) ) - 9. # Conversion from Mpc to Gpc
         self.log10_Vc_cpu = np.log10( self.comoving_volume(self.z_cpu, from_scratch=False) ) - 9. # Conversion to Gpc
         self.log10_dl_at_z_cpu = np.log10( self.luminosity_distance(self.z_cpu, from_scratch=False) )
