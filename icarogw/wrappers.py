@@ -1,12 +1,12 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, check_bounds_1D
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
-from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line, Gaussian_rate
+from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_redshift_probability, beta_rate_line, Gaussian_rate
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, PL_normfact, PL_normfact_z
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import _mixed_double_sigmoid_function, _mixed_linear_function, _mixed_linear_sinusoid_function, BrokenPowerLawMultiPeak
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
-from scipy.stats import gamma
+from scipy.stats import gamma, johnsonsu
 
     
 # A parent class for the rate
@@ -42,6 +42,12 @@ class rateevolution_beta(rate_default):
         self.population_parameters=['a','b','c']
     def update(self,**kwargs):
         self.rate=beta_rate(**kwargs)
+
+class rateevolution_beta_redshift_probability(rate_default):
+    def __init__(self):
+        self.population_parameters=['a','b','loc','scale']
+    def update(self,**kwargs):
+        self.rate=beta_redshift_probability(**kwargs)
 
 class rateevolution_beta_line(rate_default):
     def __init__(self):
@@ -2703,19 +2709,49 @@ class DoublePowerlaw:
             self.delta = delta
 
         def log_sigmoid(self, log10_m):
-            # Logarithm of the sigmoid smoothing function.
             xp = get_module_array(log10_m)
             return - xp.log1p(xp.exp(-(log10_m - self.m_b) / self.delta))
 
         def log_1msigmoid(self, log10_m):
-            # Logarithm of one minus the sigmoid smoothing function.
             xp = get_module_array(log10_m)
             return - xp.log1p(xp.exp( (log10_m - self.m_b) / self.delta))
+
+        # def box_smoothing(self, log10_m, left_cut, right_cut, steepness = 10):
+
+        #     def sigmoid(x, x0, k):
+        #         xp = get_module_array(x)
+        #         return 1 / (1 + xp.exp(-k * (x - x0)))
+        #     S_left  = sigmoid(log10_m, left_cut,   steepness)
+        #     S_right = sigmoid(log10_m, right_cut, -steepness)
+        #     return S_left * S_right
+
+        # def find_divergence(self, log10_m, pdf_values, m_b_index):
+        #     xp = get_module_array(log10_m)
+        #     # Compute the derivative of the PDF numerically (using central differences).
+        #     dx = log10_m[1] - log10_m[0]
+        #     derivative = (xp.roll(pdf_values, -1) - xp.roll(pdf_values, 1)) / (2 * dx)
+            
+        #     # Find the index where the derivative changes sign
+        #     turning_point_left  = None
+        #     turning_point_right = None
+
+        #     # Find the turning point on the left side of m_b_index
+        #     turning_point_left = None
+        #     for i in range(m_b_index - 1, 0, -1):  # Search left of m_b_index
+        #         if derivative[i - 1] < 0 and derivative[i] > 0:  # Derivative changes from negative to positive
+        #             turning_point_left = i
+        #             break
+
+        #     # Find the turning point on the right side of m_b_index
+        #     turning_point_right = None
+        #     for i in range(m_b_index + 1, len(derivative) - 1):  # Search right of m_b_index
+        #         if derivative[i] < 0 and derivative[i + 1] > 0:  # Derivative changes from negative to positive
+        #             turning_point_right = i
+        #             break
+
+        #     return turning_point_left, turning_point_right
         
         def _pdf(self, log10_m):
-            # Unnormalized smoothed double powerlaw = (1-sigma)*x^alpha + const*sigma*x^beta,
-            # with sigma = (1+exp(-k)), k = (x-m_b)/delta, and const = m_b^(alpha-beta).
-            # The function is evaluated in log for numerical stability.
             xp = get_module_array(log10_m)
             log_sigma   = self.log_sigmoid(log10_m)
             log_1msigma = self.log_1msigmoid(log10_m)
@@ -2724,21 +2760,68 @@ class DoublePowerlaw:
             log_dpl_b = log_sigma   + self.beta  * xp.log(log10_m) + log_const
             dpl = xp.exp(log_dpl_a) + xp.exp(log_dpl_b)
 
+            # smooth_factor = 1
+            # # Search for possible divergeces in the distribution.
+            # turning_point_left, turning_point_right = self.find_divergence(log10_m, dpl, xp.searchsorted(log10_m, self.m_b))
+            # if turning_point_left is not None and turning_point_right is None:
+            #     # Cure divergences by applying a box-like smoothing to the left side
+            #     smooth_factor = self.box_smoothing(log10_m, log10_m[turning_point_left], log10_m[-1])
+            # elif turning_point_left is None and turning_point_right is not None:
+            #     # Cure divergences by applying a box-like smoothing to the right side
+            #     smooth_factor = self.box_smoothing(log10_m, log10_m[0], log10_m[turning_point_right])
+            # elif turning_point_left is not None and turning_point_right is not None:
+            #     # Cure divergences by applying a box-like smoothing between these two local minima
+            #     smooth_factor = self.box_smoothing(log10_m, log10_m[turning_point_left], log10_m[turning_point_right])
+            # # Apply the box-like smoothing to the PDF
+            # dpl *= smooth_factor
+            
             # Set values outside [mmin, mmax] to 0
             dpl[(log10_m < self.mmin) | (log10_m > self.mmax)] = 0
-            return dpl
+
+            # Check if there are still divergences
+            nonzero_indices = xp.where(dpl > 0)[0]
+            if (xp.argmax(dpl) == nonzero_indices[0]) or (xp.argmax(dpl) == nonzero_indices[-1]):
+                return xp.nan
+            else:
+                return dpl
 
     def pdf(self, log10_m):
-        # Compute the normalized PDF.
         xp = get_module_array(log10_m)
         dpl_no_norm = DoublePowerlaw.DoublePowerlawNoNorm(self.alpha, self.beta, self.mmin, self.mmax, self.m_b, self.delta)
-        x = np.linspace(self.mmin, self.mmax, 1000)
-        norm = xp.trapz(dpl_no_norm._pdf(x), x)
-        return dpl_no_norm._pdf(log10_m) / norm
+        x = xp.linspace(self.mmin, self.mmax, 1000)
+        try:
+            norm = xp.trapz(dpl_no_norm._pdf(x), x)
+            return dpl_no_norm._pdf(log10_m) / norm
+        except:
+            # If the normalization fails, return NaN
+            return xp.nan
 
     def log_pdf(self, log10_m):
         xp = get_module_array(log10_m)
         return xp.log(self.pdf(log10_m))
+
+
+class Johnson():
+    """
+        Class for the mass ratio distribution as a Johnsonsu distribution.
+        The PDF takes as input the log10 logarithm of the primary mass.
+        https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.johnsonsu.html#scipy.stats.johnsonsu
+    """
+    def __init__(self):
+        self.population_parameters = ['a_johnson', 'b_johnson', 'loc_johnson', 'scale_johnson']
+
+    def update(self,**kwargs):
+        self.a_johnson = kwargs['a_johnson']
+        self.b_johnson = kwargs['b_johnson']
+        self.loc       = kwargs['loc_johnson']
+        self.scale     = kwargs['scale_johnson']
+
+    def pdf(self,log10_q):
+        return johnsonsu.pdf(log10_q, a = self.a_johnson, b = self.b_johnson, loc = self.loc, scale = self.scale)
+
+    def log_pdf(self,log10_q):
+        xp = get_module_array(log10_q)
+        return xp.log(self.pdf(log10_q))
 
 
 class Gamma():
