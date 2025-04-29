@@ -2808,20 +2808,24 @@ class Johnson():
         https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.johnsonsu.html#scipy.stats.johnsonsu
     """
     def __init__(self):
-        self.population_parameters = ['a_johnson', 'b_johnson', 'loc_johnson', 'scale_johnson']
+        self.population_parameters = ['a_johnson', 'b_johnson', 'loc_johnson', 'scale_johnson', 'mmin_johnson', 'mmax_johnson']
 
     def update(self,**kwargs):
         self.a_johnson = kwargs['a_johnson']
         self.b_johnson = kwargs['b_johnson']
         self.loc       = kwargs['loc_johnson']
         self.scale     = kwargs['scale_johnson']
+        self.mmin      = kwargs['mmin_johnson']
+        self.mmax      = kwargs['mmax_johnson']
 
-    def pdf(self,log10_q):
-        return johnsonsu.pdf(log10_q, a = self.a_johnson, b = self.b_johnson, loc = self.loc, scale = self.scale)
+    def pdf(self,log10_m):
+        dist = johnsonsu(a = self.a_johnson, b = self.b_johnson, loc = self.loc, scale = self.scale)
+        norm = dist.cdf(self.mmax) - dist.cdf(self.mmin) # Compute the mass over [mmin, mmax]
+        return dist.pdf(log10_m) / norm
 
-    def log_pdf(self,log10_q):
-        xp = get_module_array(log10_q)
-        return xp.log(self.pdf(log10_q))
+    def log_pdf(self,log10_m):
+        xp = get_module_array(log10_m)
+        return xp.log(self.pdf(log10_m))
 
 
 class Gamma():
