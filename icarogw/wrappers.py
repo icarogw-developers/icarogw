@@ -2715,41 +2715,6 @@ class DoublePowerlaw:
         def log_1msigmoid(self, log10_m):
             xp = get_module_array(log10_m)
             return - xp.log1p(xp.exp( (log10_m - self.m_b) / self.delta))
-
-        # def box_smoothing(self, log10_m, left_cut, right_cut, steepness = 10):
-
-        #     def sigmoid(x, x0, k):
-        #         xp = get_module_array(x)
-        #         return 1 / (1 + xp.exp(-k * (x - x0)))
-        #     S_left  = sigmoid(log10_m, left_cut,   steepness)
-        #     S_right = sigmoid(log10_m, right_cut, -steepness)
-        #     return S_left * S_right
-
-        # def find_divergence(self, log10_m, pdf_values, m_b_index):
-        #     xp = get_module_array(log10_m)
-        #     # Compute the derivative of the PDF numerically (using central differences).
-        #     dx = log10_m[1] - log10_m[0]
-        #     derivative = (xp.roll(pdf_values, -1) - xp.roll(pdf_values, 1)) / (2 * dx)
-            
-        #     # Find the index where the derivative changes sign
-        #     turning_point_left  = None
-        #     turning_point_right = None
-
-        #     # Find the turning point on the left side of m_b_index
-        #     turning_point_left = None
-        #     for i in range(m_b_index - 1, 0, -1):  # Search left of m_b_index
-        #         if derivative[i - 1] < 0 and derivative[i] > 0:  # Derivative changes from negative to positive
-        #             turning_point_left = i
-        #             break
-
-        #     # Find the turning point on the right side of m_b_index
-        #     turning_point_right = None
-        #     for i in range(m_b_index + 1, len(derivative) - 1):  # Search right of m_b_index
-        #         if derivative[i] < 0 and derivative[i + 1] > 0:  # Derivative changes from negative to positive
-        #             turning_point_right = i
-        #             break
-
-        #     return turning_point_left, turning_point_right
         
         def _pdf(self, log10_m):
             xp = get_module_array(log10_m)
@@ -2759,21 +2724,6 @@ class DoublePowerlaw:
             log_dpl_a = log_1msigma + self.alpha * xp.log(log10_m)
             log_dpl_b = log_sigma   + self.beta  * xp.log(log10_m) + log_const
             dpl = xp.exp(log_dpl_a) + xp.exp(log_dpl_b)
-
-            # smooth_factor = 1
-            # # Search for possible divergeces in the distribution.
-            # turning_point_left, turning_point_right = self.find_divergence(log10_m, dpl, xp.searchsorted(log10_m, self.m_b))
-            # if turning_point_left is not None and turning_point_right is None:
-            #     # Cure divergences by applying a box-like smoothing to the left side
-            #     smooth_factor = self.box_smoothing(log10_m, log10_m[turning_point_left], log10_m[-1])
-            # elif turning_point_left is None and turning_point_right is not None:
-            #     # Cure divergences by applying a box-like smoothing to the right side
-            #     smooth_factor = self.box_smoothing(log10_m, log10_m[0], log10_m[turning_point_right])
-            # elif turning_point_left is not None and turning_point_right is not None:
-            #     # Cure divergences by applying a box-like smoothing between these two local minima
-            #     smooth_factor = self.box_smoothing(log10_m, log10_m[turning_point_left], log10_m[turning_point_right])
-            # # Apply the box-like smoothing to the PDF
-            # dpl *= smooth_factor
             
             # Set values outside [mmin, mmax] to 0
             dpl[(log10_m < self.mmin) | (log10_m > self.mmax)] = 0
