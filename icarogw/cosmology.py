@@ -686,7 +686,7 @@ class beta_rate():
     def log_evaluate(self,z):
         return self.c * scipy.stats.beta.pdf(z, self.a, self.b)    # We want the log(rate) to be a beta distribution
 
-class beta_redshift_probability():
+class beta_redshift_probability(basic_redshift_rate):
     '''
     Class for a beta distribution for the redshift probability.
     The function needs to be converted into a rate by multiplying by the volume factor.
