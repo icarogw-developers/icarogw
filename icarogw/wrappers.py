@@ -1445,12 +1445,14 @@ class GaussianEvolving():
         self.order = order
         mu_list    = ['mu_z{}'.format(   i) for i in range(order + 1)]
         sigma_list = ['sigma_z{}'.format(i) for i in range(order + 1)]
-        self.population_parameters = mu_list + sigma_list
+        self.population_parameters = mu_list + sigma_list + ['mmin', 'mmax']
 
     def update(self, **kwargs):
 
         for par in kwargs.keys():
             globals()['self.%s' % par] = kwargs[par]
+        self.mmin = kwargs['mmin']
+        self.mmax = kwargs['mmax']
 
     def polynomial(self, expansion_order, x, variable):
         
@@ -1466,7 +1468,7 @@ class GaussianEvolving():
         sx = get_module_array_scipy(m)
         self.muz    = self.polynomial(self.order, z, 'mu')
         self.sigmaz = self.polynomial(self.order, z, 'sigma')
-        a, b = (0. - self.muz) / self.sigmaz, (self.muz + 6*self.muz - self.muz) / self.sigmaz  # Truncte the Gaussian at zero and mu+6*sigma. This improve the numerical stability.
+        a, b = (self.mmin - self.muz) / self.sigmaz, (self.mmax - self.muz) / self.sigmaz
         gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
         return gaussian
 
