@@ -781,16 +781,16 @@ class CBC_redshift_rate_m_given_redshift(object):
         '''
         xp = get_module_array(prior)
 
-        z           = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
+        z  = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
         # Convert m from detector to source frame.
-        ms          = kwargs['mass_1'] / (1.+z)
+        ms = kwargs['mass_1'] / (1.+z)
         
         # Compute the weights for the samples Monte Carlo integral, Eq.3 of [2305.17973].
-        # w = 1/prior_d dN/(dmd ddL dtd) = 1/prior_d dN/(dms dVc dts) 1/|J_d->s| 1/1+z
+        # w = 1/prior_d dN/(dmd ddL dtd) = 1/prior_d dN/(dms dVc dts) 1/|J_d->s|
         # dN/(dms dVc dts) = R(z) p_pop(ms|z)
-        # Note that the volume factor (dVc/dz) is not included since we directly model the observed rate.
+        # Note that the volume factor (1/1+z dVc/dz) is not included since we directly model the observed rate.
         log_weights = self.mzw.log_pdf(ms, z) + self.rw.rate.log_evaluate(z) \
-        - xp.log(prior) - xp.log(detector2source_jacobian_single_mass(z, self.cw.cosmology)) - xp.log1p(z)
+        - xp.log(prior) - xp.log(detector2source_jacobian_single_mass(z, self.cw.cosmology))
         
         if self.sw is not None:
             log_weights += self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
@@ -815,16 +815,16 @@ class CBC_redshift_rate_m_given_redshift(object):
         '''
         xp = get_module_array(prior)
         
-        z           = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
+        z  = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
         # Convert m from detector to source frame.
-        ms          = kwargs['mass_1'] / (1.+z)
+        ms = kwargs['mass_1'] / (1.+z)
         
         # Compute the weights for the samples Monte Carlo integral, Eq.7 of [2305.17973].
-        # w = 1/prior_d dN/(dmd ddL dtd) = 1/prior_d dN/(dms dVc dts) 1/|J_d->s| 1/1+z
+        # w = 1/prior_d dN/(dmd ddL dtd) = 1/prior_d dN/(dms dVc dts) 1/|J_d->s|
         # dN/(dms dVc dts) = R(z) p_pop(ms|z)
-        # Note that the volume factor (dVc/dz) is not included since we directly model the observed rate.
+        # Note that the volume factor (1/1+z dVc/dz) is not included since we directly model the observed rate.
         log_weights = self.mzw.log_pdf(ms, z) + self.rw.rate.log_evaluate(z) \
-        - xp.log(prior) - xp.log(detector2source_jacobian_single_mass(z, self.cw.cosmology)) - xp.log1p(z)
+        - xp.log(prior) - xp.log(detector2source_jacobian_single_mass(z, self.cw.cosmology))
         
         if self.sw is not None:
             log_weights += self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
