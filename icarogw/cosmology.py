@@ -658,6 +658,31 @@ class md_rate(basic_redshift_rate):
         xp = get_module_array(z)
         return xp.log1p(xp.power(1+self.zp,-self.gamma-self.kappa))+self.gamma*xp.log1p(z)-xp.log1p(xp.power((1+z)/(1+self.zp),self.gamma+self.kappa))
 
+class beta_rate():
+    '''
+    Class for a beta distribution redshift rate
+    '''
+    def __init__(self,a,b,c):
+        self.a = a
+        self.b = b
+        self.c = c
+    def log_evaluate(self,z):
+        return self.c * scipy.stats.beta.pdf(z, self.a, self.b)    # We want the log(rate) to be a beta distribution
+
+class beta_redshift_probability(basic_redshift_rate):
+    '''
+    Class for a beta distribution for the redshift probability.
+    The function needs to be converted into a rate by multiplying by the volume factor.
+    '''
+    def __init__(self,a,b,loc,scale):
+        self.a     = a
+        self.b     = b
+        self.loc   = loc
+        self.scale = scale
+    def log_evaluate(self,z):
+        xp = get_module_array(z)
+        return xp.log(scipy.stats.beta.pdf(z, self.a, self.b, self.loc, self.scale))
+
 # LVK Reviewed
 class basic_absM_rate(object):
     '''Super class for the redshift rate
