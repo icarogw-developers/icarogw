@@ -1757,3 +1757,100 @@ class GaussianLinear():
     
     def return_mu_sigma_z( self):
         return self.muz, self.sigmaz
+
+class UniformDistribution():
+
+    def __init__(self, mmin, mmax):
+        self.mmin = mmin
+        self.mmax = mmax
+
+    def log_pdf(self, m):
+        xp = get_module_array(m)
+        value = -np.log(self.mmax - self.mmin)
+        uniform = xp.full(len(m), value)
+        indx = check_bounds_1D(m, self.mmin, self.mmax)
+        uniform[indx] = -xp.inf
+        return uniform
+
+    def pdf(self,m):
+        xp = get_module_array(m)
+        return xp.exp(self.log_pdf(m))
+    
+
+# ------------------- #
+# Used in LISA models #
+# ------------------- #
+
+class DoublePowerlawNoNorm:
+
+    def __init__(self, alpha, beta, mmin, mmax, m_b, delta):
+        self.alpha = alpha
+        self.beta  = -beta
+        self.mmin  = mmin
+        self.mmax  = mmax
+        self.m_b   = m_b
+        self.delta = delta
+
+    def log_sigmoid(self, log10_m):
+        xp = get_module_array(log10_m)
+        return - xp.log1p(xp.exp(-(log10_m - self.m_b) / self.delta))
+
+    def log_1msigmoid(self, log10_m):
+        xp = get_module_array(log10_m)
+        return - xp.log1p(xp.exp( (log10_m - self.m_b) / self.delta))
+    
+    def _pdf(self, log10_m):
+        xp = get_module_array(log10_m)
+        log_sigma   = self.log_sigmoid(log10_m)
+        log_1msigma = self.log_1msigmoid(log10_m)
+        log_const = (self.alpha - self.beta) * xp.log(self.m_b)
+        log_dpl_a = log_1msigma + self.alpha * xp.log(log10_m)
+        log_dpl_b = log_sigma   + self.beta  * xp.log(log10_m) + log_const
+        dpl = xp.exp(log_dpl_a) + xp.exp(log_dpl_b)
+        
+        # Set values outside [mmin, mmax] to 0
+        dpl[(log10_m < self.mmin) | (log10_m > self.mmax)] = 0
+
+        # Check if there are still divergences
+        nonzero_indices = xp.where(dpl > 0)[0]
+        if (xp.argmax(dpl) == nonzero_indices[0]) or (xp.argmax(dpl) == nonzero_indices[-1]):
+            return xp.nan
+        else:
+            return dpl
+
+
+class DoublePowerlawRedshiftNoNorm:
+
+    def __init__(self, alpha, beta, mmin, mmax, delta):
+        self.alpha = alpha
+        self.beta  = -beta
+        self.mmin  = mmin
+        self.mmax  = mmax
+        self.delta = delta
+
+    def log_sigmoid(self, log10_m, m_b):
+        xp = get_module_array(log10_m)
+        return - xp.log1p(xp.exp(-(log10_m - m_b) / self.delta))
+
+    def log_1msigmoid(self, log10_m, m_b):
+        xp = get_module_array(log10_m)
+        return - xp.log1p(xp.exp( (log10_m - m_b) / self.delta))
+    
+    def _pdf(self, log10_m, m_b):
+        xp = get_module_array(log10_m)
+        log_sigma   = self.log_sigmoid(log10_m, m_b)
+        log_1msigma = self.log_1msigmoid(log10_m, m_b)
+        log_const = (self.alpha - self.beta) * xp.log(m_b)
+        log_dpl_a = log_1msigma + self.alpha * xp.log(log10_m)
+        log_dpl_b = log_sigma   + self.beta  * xp.log(log10_m) + log_const
+        dpl = xp.exp(log_dpl_a) + xp.exp(log_dpl_b)
+
+        # Set values outside [mmin, mmax] to 0
+        dpl[(log10_m < self.mmin) | (log10_m > self.mmax)] = 0
+
+        # Check if there are still divergences
+        nonzero_indices = xp.where(dpl > 0)[0]
+        if (xp.argmax(dpl) == nonzero_indices[0]) or (xp.argmax(dpl) == nonzero_indices[-1]):
+            return xp.nan
+        else:
+            return dpl

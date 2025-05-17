@@ -1,9 +1,9 @@
 from .cupy_pal import get_module_array, get_module_array_scipy, np
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
-from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_redshift_probability, beta_rate_line, Gaussian_rate
+from .cosmology import  md_rate, powerlaw_rate
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
-from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
+from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, DoublePowerlawNoNorm, DoublePowerlawRedshiftNoNorm, UniformDistribution, _mixed_linear_function, _mixed_double_sigmoid_function
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 from scipy.stats import gamma, johnsonsu
@@ -1478,6 +1478,24 @@ class GaussianEvolving():
     
     def return_mu_sigma(self):
         return self.muz, self.sigmaz
+    
+
+class Uniform():
+
+    def __init__(self):
+        self.population_parameters = ['mmin', 'mmax']
+
+    def update(self,**kwargs):
+        self.mmin = kwargs['mmin']
+        self.mmax = kwargs['mmax']
+
+    def pdf(self,m):
+        tmp = UniformDistribution(self.mmin, self.mmax)
+        return tmp.pdf(m)
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
 
 
 # ----------- #
@@ -1496,45 +1514,9 @@ class DoublePowerlaw:
         for param in self.population_parameters:
             setattr(self, param, kwargs[param])
 
-    class DoublePowerlawNoNorm:
-        def __init__(self, alpha, beta, mmin, mmax, m_b, delta):
-            self.alpha = alpha
-            self.beta  = -beta
-            self.mmin  = mmin
-            self.mmax  = mmax
-            self.m_b   = m_b
-            self.delta = delta
-
-        def log_sigmoid(self, log10_m):
-            xp = get_module_array(log10_m)
-            return - xp.log1p(xp.exp(-(log10_m - self.m_b) / self.delta))
-
-        def log_1msigmoid(self, log10_m):
-            xp = get_module_array(log10_m)
-            return - xp.log1p(xp.exp( (log10_m - self.m_b) / self.delta))
-        
-        def _pdf(self, log10_m):
-            xp = get_module_array(log10_m)
-            log_sigma   = self.log_sigmoid(log10_m)
-            log_1msigma = self.log_1msigmoid(log10_m)
-            log_const = (self.alpha - self.beta) * xp.log(self.m_b)
-            log_dpl_a = log_1msigma + self.alpha * xp.log(log10_m)
-            log_dpl_b = log_sigma   + self.beta  * xp.log(log10_m) + log_const
-            dpl = xp.exp(log_dpl_a) + xp.exp(log_dpl_b)
-            
-            # Set values outside [mmin, mmax] to 0
-            dpl[(log10_m < self.mmin) | (log10_m > self.mmax)] = 0
-
-            # Check if there are still divergences
-            nonzero_indices = xp.where(dpl > 0)[0]
-            if (xp.argmax(dpl) == nonzero_indices[0]) or (xp.argmax(dpl) == nonzero_indices[-1]):
-                return xp.nan
-            else:
-                return dpl
-
     def pdf(self, log10_m):
         xp = get_module_array(log10_m)
-        dpl_no_norm = DoublePowerlaw.DoublePowerlawNoNorm(self.alpha, self.beta, self.mmin, self.mmax, self.m_b, self.delta)
+        dpl_no_norm = DoublePowerlawNoNorm(self.alpha, self.beta, self.mmin, self.mmax, self.m_b, self.delta)
         x = xp.linspace(self.mmin, self.mmax, 1000)
         try:
             norm = xp.trapz(dpl_no_norm._pdf(x), x)
@@ -1546,6 +1528,52 @@ class DoublePowerlaw:
     def log_pdf(self, log10_m):
         xp = get_module_array(log10_m)
         return xp.log(self.pdf(log10_m))
+
+
+class DoublePowerlawRedshift:
+    """
+        Class for the primary mass distribution as two powerlaws smoothly attached at a brake point.
+        The PDF takes as input the log10 logarithm of the mass.
+    """
+    def __init__(self, redshift_transition = 'linear'):
+        self.population_parameters = ['alpha', 'beta', 'mmin', 'mmax', 'delta']
+        self.redshift_transition   = redshift_transition
+        if   self.redshift_transition == 'linear':
+            self.population_parameters += ['m_b_z0', 'm_b_z10']
+        elif self.redshift_transition == 'sigmoid':
+            self.population_parameters += ['m_b_z0', 'm_b_z10', 'm_b_zt', 'm_b_delta_zt']
+
+    def update(self, **kwargs):
+        for param in self.population_parameters:
+            setattr(self, param, kwargs[param])
+
+    def pdf(self, log10_m, z):
+        xp = get_module_array(log10_m)
+
+        if   self.redshift_transition == 'linear':
+            m_b = self.m_b_z0  + (self.m_b_z10 - self.m_b_z0) * z / 10
+        elif self.redshift_transition == 'sigmoid':
+            m_b = self.m_b_z10 + (self.m_b_z0 - self.m_b_z10) / (1 + np.exp((z - self.m_b_zt) / self.m_b_delta_zt))
+
+        # Evaluate unnormalized PDF pointwise
+        dpl_no_norm = DoublePowerlawRedshiftNoNorm(self.alpha, self.beta, self.mmin, self.mmax, self.delta)
+        unnorm = dpl_no_norm._pdf(log10_m, m_b)
+
+        # Normalize by integrating PDF over full support for each z
+        x = xp.linspace(self.mmin, self.mmax, 1000)
+        x_tile = xp.tile(x, (log10_m.shape[0], 1))  # shape (N, 1000)
+        m_b_tile = xp.tile(m_b[:, xp.newaxis], (1, 1000))
+        unnorm_full = dpl_no_norm._pdf(x_tile, m_b_tile)
+        try:
+            norm = xp.trapz(unnorm_full, x, axis=1)
+            return unnorm / norm
+        except:
+            # If the normalization fails, return NaN
+            return xp.nan
+
+    def log_pdf(self, log10_m, z):
+        xp = get_module_array(log10_m)
+        return xp.log(self.pdf(log10_m, z))
 
 
 class Johnson():
