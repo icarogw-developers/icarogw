@@ -1,8 +1,9 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, is_there_cupy
+from .priors import UniformDistribution
 from icarogw import cupy_pal
 from scipy.integrate import cumulative_trapezoid
 import mpmath
-import scipy.stats, scipy.misc
+import scipy.stats
 
 COST_C= 299792.458 # Speed of light in km/s
 
@@ -682,6 +683,20 @@ class beta_redshift_probability(basic_redshift_rate):
     def log_evaluate(self,z):
         xp = get_module_array(z)
         return xp.log(scipy.stats.beta.pdf(z, self.a, self.b, self.loc, self.scale))
+
+class uniform_redshift_probability(basic_redshift_rate):
+    '''
+    Class for a uniform distribution for the redshift probability.
+    The function needs to be converted into a rate by multiplying by the volume factor.
+    '''
+    def __init__(self,z_min,z_max):
+        self.z_min = z_min
+        self.z_max = z_max
+
+    def log_evaluate(self,z):
+        xp = get_module_array(z)
+        tmp = UniformDistribution(self.z_min, self.z_max)
+        return xp.log(tmp.pdf(z))
 
 # LVK Reviewed
 class basic_absM_rate(object):
