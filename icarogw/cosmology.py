@@ -694,9 +694,8 @@ class uniform_redshift_probability(basic_redshift_rate):
         self.z_max = z_max
 
     def log_evaluate(self,z):
-        xp = get_module_array(z)
         tmp = UniformDistribution(self.z_min, self.z_max)
-        return xp.log(tmp.pdf(z))
+        return tmp.log_pdf(z)
 
 # LVK Reviewed
 class basic_absM_rate(object):

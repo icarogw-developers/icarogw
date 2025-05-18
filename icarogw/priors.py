@@ -1763,19 +1763,22 @@ class UniformDistribution():
     def __init__(self, mmin, mmax):
         self.mmin = mmin
         self.mmax = mmax
-
+    
     def log_pdf(self, m):
         xp = get_module_array(m)
+        m = xp.asarray(m)
+        orig_shape = m.shape
+        m = m.flatten()
         value = -np.log(self.mmax - self.mmin)
-        uniform = xp.full(len(m), value)
-        indx = check_bounds_1D(m, self.mmin, self.mmax)
-        uniform[indx] = -xp.inf
-        return uniform
+        uniform = xp.full_like(m, value)
+        mask = (m < self.mmin) | (m > self.mmax)
+        uniform[mask] = -xp.inf
+        return uniform.reshape(orig_shape)
 
     def pdf(self,m):
         xp = get_module_array(m)
         return xp.exp(self.log_pdf(m))
-    
+
 
 # ------------------- #
 # Used in LISA models #

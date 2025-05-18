@@ -50,7 +50,7 @@ class posterior_samples_catalog(object):
             len_single = self.posterior_samples_dict[event].nsamples
             Ntake = xp.minimum(len_single,self.nparallel)
             self.Ns_array[i] = xp.minimum(len_single,self.nparallel)
-            print('Taking {:d} posterior samples from {:s} that has {:d} samples'.format(Ntake,event,len_single))
+            #print('Taking {:d} posterior samples from {:s} that has {:d} samples'.format(Ntake,event,len_single))
             # Permute the posterior samples below and then take the first Ntake
             rand_perm = xp.random.permutation(len_single)[:Ntake]
             for key in self.posterior_parallel.keys():
