@@ -1,5 +1,5 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, is_there_cupy
-from .priors import UniformDistribution
+from .priors import UniformDistribution, PowerLawStationary
 from icarogw import cupy_pal
 from scipy.integrate import cumulative_trapezoid
 import mpmath
@@ -695,6 +695,19 @@ class uniform_redshift_probability(basic_redshift_rate):
 
     def log_evaluate(self,z):
         tmp = UniformDistribution(self.z_min, self.z_max)
+        return tmp.log_pdf(z)
+    
+class powerlaw_redshift_probability(basic_redshift_rate):
+    '''
+    Class for a powerlaw distribution for the redshift probability.
+    The function needs to be converted into a rate by multiplying by the volume factor.
+    '''
+    def __init__(self,gamma, z_min, z_max):
+        self.gamma=abs(gamma)
+        self.z_min=z_min
+        self.z_max=z_max
+    def log_evaluate(self,z):
+        tmp = PowerLawStationary(-self.gamma, self.z_min, self.z_max)
         return tmp.log_pdf(z)
 
 # LVK Reviewed
