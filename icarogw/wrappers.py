@@ -1490,6 +1490,26 @@ class Uniform():
     def log_pdf(self,m):
         xp = get_module_array(m)
         return xp.log(self.pdf(m))
+    
+
+class Gaussian():
+
+    def __init__(self):
+        self.population_parameters = ['mu', 'sigma', 'mmin', 'mmax']
+
+    def update(self,**kwargs):
+        self.mu    = kwargs['mu']
+        self.sigma = kwargs['sigma']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+    def pdf(self,m):
+        tmp = TruncatedGaussian(self.mu, self.sigma, self.mmin, self.mmax)
+        return tmp.pdf(m)
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
 
 
 # ----------- #

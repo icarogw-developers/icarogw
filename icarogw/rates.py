@@ -837,6 +837,71 @@ class CBC_redshift_rate_m_given_redshift(object):
         return log_out
 
 
+class CBC_rate_x(object):
+    def __init__(self,x_wrapper):
+        
+        self.xw = x_wrapper
+        self.population_parameters = self.xw.population_parameters
+        event_parameters = ['x']
+
+        self.PEs_parameters = event_parameters.copy()
+
+    def update(self,**kwargs):
+        '''
+        This method updates the population models encoded in the wrapper. 
+        
+        Parameters
+        ----------
+        kwargs: flags
+            The kwargs passed should be the population parameters given in self.population_parameters
+        '''
+        self.xw.update( **{key: kwargs[key] for key in self.xw.population_parameters})
+        
+    def log_rate_PE(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the posterior samples.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        x = kwargs['x']
+        
+        # Compute the weights for the samples Monte Carlo integral, Eq.3 of [2305.17973].
+        # w = 1/prior_d dN/dx = 1/prior dN/dx
+        # dN/dx = p_pop(x)
+        log_weights = self.xw.log_pdf(x) - xp.log(prior)
+        log_out = log_weights
+            
+        return log_out
+    
+    def log_rate_injections(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the injections.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        x = kwargs['x']
+        
+        # Compute the weights for the samples Monte Carlo integral, Eq.3 of [2305.17973].
+        # w = 1/prior_d dN/dx = 1/prior dN/dx
+        # dN/dx = p_pop(x)
+        log_weights = self.xw.log_pdf(x) - xp.log(prior)
+        log_out = log_weights
+            
+        return log_out
+
+
 class CBC_rate_total_mass_q(object):
     '''
     This is a rate model that parametrizes the CBC rate per year at the detector in terms of source-frame
