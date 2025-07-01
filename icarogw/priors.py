@@ -1729,6 +1729,25 @@ class GaussianStationary():
         xp = get_module_array(m)
         return xp.exp(self.log_pdf(m))
 
+class GaussianStationary_truncated():
+
+    def __init__(self, mu, sigma, mmin_g, mmax_g):
+        self.mu     = mu
+        self.sigma  = sigma
+        self.mmin_g = mmin_g
+        self.mmax_g = mmax_g
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        sx = get_module_array_scipy(m)
+        a, b = (self.mmin_g - self.mu) / self.sigma, (self.mmax_g - self.mu) / self.sigma 
+        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
+        return gaussian
+
+    def pdf(self,m):
+        xp = get_module_array(m)
+        return xp.exp(self.log_pdf(m))
+
 class GaussianLinear():
 
     def __init__(self, z, mu_z0, mu_z1, sigma_z0, sigma_z1, mmin):

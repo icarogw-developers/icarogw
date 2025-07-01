@@ -3,7 +3,7 @@ from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_as
 from .cosmology import  md_rate, powerlaw_rate, beta_rate, beta_redshift_probability, uniform_redshift_probability, powerlaw_redshift_probability
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
-from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, DoublePowerlawNoNorm, DoublePowerlawRedshiftNoNorm, UniformDistribution, _mixed_linear_function, _mixed_double_sigmoid_function
+from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianStationary_truncated, GaussianLinear, DoublePowerlawNoNorm, DoublePowerlawRedshiftNoNorm, UniformDistribution, _mixed_linear_function, _mixed_double_sigmoid_function
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 from scipy.stats import gamma, johnsonsu
@@ -1496,7 +1496,7 @@ class Uniform():
 # LISA models #
 # ----------- #
 
-class DoublePowerlaw:
+class DoublePowerlaw():
     """
         Class for the primary mass distribution as two powerlaws smoothly attached at a brake point.
         The PDF takes as input the log10 logarithm of the mass.
@@ -1524,7 +1524,7 @@ class DoublePowerlaw:
         return xp.log(self.pdf(log10_m))
 
 
-class DoublePowerlawRedshift:
+class DoublePowerlawRedshift():
     """
         Class for the primary mass distribution as two powerlaws smoothly attached at a brake point.
         The PDF takes as input the log10 logarithm of the mass.
@@ -1616,3 +1616,40 @@ class Gamma():
     def log_pdf(self,log10_q):
         xp = get_module_array(log10_q)
         return xp.log(self.pdf(log10_q))
+
+
+class DoublePowerlaw_Gaussian():
+    """
+        Class for the primary mass distribution as two powerlaws smoothly attached at a brake point,
+        plus a Gaussian peak.
+        The PDF takes as input the log10 logarithm of the mass.
+    """
+    def __init__(self):
+        self.population_parameters = ['alpha', 'beta', 'mmin', 'mmax', 'm_b', 'delta', 'mu_g', 'sigma_g', 'mix']
+
+    def update(self, **kwargs):
+        for param in self.population_parameters:
+            setattr(self, param, kwargs[param])
+
+    def pdf(self, log10_m):
+        xp = get_module_array(log10_m)
+        dpl_no_norm_class = DoublePowerlawNoNorm(self.alpha, self.beta, self.mmin, self.mmax, self.m_b, self.delta)
+        gaussian_class    = GaussianStationary_truncated(self.mu_g, self.sigma_g, self.mmin, self.mmax)
+        x = xp.linspace(self.mmin, self.mmax, 1000)
+        gaussian_part = gaussian_class.pdf(log10_m)
+        try:
+            norm = xp.trapz(dpl_no_norm_class._pdf(x), x)
+            dpl_part = dpl_no_norm_class._pdf(log10_m) / norm
+        except:
+            # If the normalization fails, return NaN
+            dpl_part = xp.nan
+
+        # Impose the rate to be between [0,1].
+        if (self.mix > 1) or (self.mix < 0):
+            return xp.nan
+        else:
+            return self.mix * dpl_part + (1-self.mix) * gaussian_part
+
+    def log_pdf(self, log10_m):
+        xp = get_module_array(log10_m)
+        return xp.log(self.pdf(log10_m))
