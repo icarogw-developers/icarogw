@@ -1768,10 +1768,11 @@ class GaussianStationary():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
+        gaussian = TruncatedGaussian(self.mu, self.sigma, self.mmin_g, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)
@@ -1791,10 +1792,11 @@ class GaussianLinear():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
+        gaussian = TruncatedGaussian(self.muz, self.sigmaz, self.mmin, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)

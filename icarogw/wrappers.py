@@ -1068,7 +1068,7 @@ class PowerLaw_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz = self.mix_z0
+            wz = xp.array(self.mix_z0)
 
         powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
         # Add left smoothing to the evolving PowerLaw.
@@ -1151,8 +1151,9 @@ class PowerLaw_GaussianRedshiftLinear_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz_alpha = self.mix_alpha_z0
-            wz_beta  = self.mix_beta_z0
+            # Need to convert to arrays to ensure CuPy compatibility.
+            wz_alpha = xp.array(self.mix_alpha_z0)
+            wz_beta  = xp.array(self.mix_beta_z0)
 
         powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
         # Add left smoothing to the evolving PowerLaw.
@@ -1164,7 +1165,7 @@ class PowerLaw_GaussianRedshiftLinear_GaussianRedshiftLinear():
         gaussian_b_part  = gaussian_b_class.pdf(m)
 
         # Impose the rate to be between [0,1].
-        if (xp.any(wz_alpha > 1)) or (xp.any(wz_alpha < 0)) or (xp.any(wz_beta > 1)) or (xp.any(wz_beta < 0)) or (xp.any(wz_alpha + wz_beta > 1)):
+        if (xp.any(wz_alpha > 1)) or (xp.any(wz_alpha < 0)) or (xp.any(wz_beta > 1)) or (xp.any(wz_beta < 0)) or (xp.any((wz_alpha + wz_beta) > 1)):
             return xp.nan
         else:
             return wz_alpha * powerlaw_part + wz_beta * gaussian_a_part + (1 - wz_beta - wz_alpha) * gaussian_b_part
@@ -1231,7 +1232,7 @@ class PowerLawRedshiftLinear_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz = self.mix_z0
+            wz = xp.array(self.mix_z0)
 
         powerlaw_class = PowerLawLinear(z, self.alpha_z0, self.alpha_z1, self.mmin_z0, self.mmin_z1, self.mmax_z0, self.mmax_z1)
         # Add left smoothing to the evolving PowerLaw.
@@ -1321,8 +1322,8 @@ class PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz_alpha = self.mix_alpha_z0
-            wz_beta  = self.mix_beta_z0
+            wz_alpha = xp.array(self.mix_alpha_z0)
+            wz_beta  = xp.array(self.mix_beta_z0)
 
         powerlaw_class_a = PowerLawLinear(z, self.alpha_a_z0, self.alpha_a_z1, self.mmin_a_z0, self.mmin_a_z1, self.mmax_a_z0, self.mmax_a_z1)
         powerlaw_class_b = PowerLawLinear(z, self.alpha_b_z0, self.alpha_b_z1, self.mmin_b_z0, self.mmin_b_z1, self.mmax_b_z0, self.mmax_b_z1)
@@ -1414,8 +1415,8 @@ class PowerLawRedshiftLinear_PowerLawRedshiftLinear_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz_alpha = self.mix_alpha_z0
-            wz_beta  = self.mix_beta_z0
+            wz_alpha = xp.array(self.mix_alpha_z0)
+            wz_beta  = xp.array(self.mix_beta_z0)
 
         powerlaw_class_a = PowerLawLinear(z, self.alpha_a_z0, self.alpha_a_z1, self.mmin_a_z0, self.mmin_a_z1, self.mmax_a_z0, self.mmax_a_z1)
         powerlaw_class_b = PowerLawLinear(z, self.alpha_b_z0, self.alpha_b_z1, self.mmin_b_z0, self.mmin_b_z1, self.mmax_b_z0, self.mmax_b_z1)
@@ -1492,7 +1493,7 @@ class GaussianRedshiftLinear_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz = self.mix_z0
+            wz = xp.array(self.mix_z0)
 
         gaussian_a_class = GaussianLinear(z, self.mu_a_z0, self.mu_a_z1, self.sigma_a_z0, self.sigma_a_z1, self.mmin_g)
         gaussian_b_class = GaussianLinear(z, self.mu_b_z0, self.mu_b_z1, self.sigma_b_z0, self.sigma_b_z1, self.mmin_g)
@@ -1570,8 +1571,8 @@ class GaussianRedshiftLinear_GaussianRedshiftLinear_GaussianRedshiftLinear():
             else:
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
-            wz_alpha = self.mix_alpha_z0
-            wz_beta  = self.mix_beta_z0
+            wz_alpha = xp.array(self.mix_alpha_z0)
+            wz_beta  = xp.array(self.mix_beta_z0)
 
         gaussian_a_class = GaussianLinear(z, self.mu_a_z0, self.mu_a_z1, self.sigma_a_z0, self.sigma_a_z1, self.mmin_g)
         gaussian_b_class = GaussianLinear(z, self.mu_b_z0, self.mu_b_z1, self.sigma_b_z0, self.sigma_b_z1, self.mmin_g)
