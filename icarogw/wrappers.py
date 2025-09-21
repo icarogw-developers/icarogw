@@ -1642,3 +1642,151 @@ class GaussianEvolving():
     
     def return_mu_sigma(self):
         return self.muz, self.sigmaz
+
+
+class Splines:
+    '''
+        Class implementing the mass function model p(m), for a B-Spline in log-mass.
+        The spline is defined by n_basis coefficients and a degree.
+
+        Some options are available:
+            - n_basis sets the number of basis functions (and coefficients).
+            - degree sets the degree of the spline.
+
+        The module is stand alone and not compatible with other wrappers.
+    '''
+
+    def __init__(self, n_basis = 10, degree = 3, custom_knots = False):
+
+        self.degree  = int(degree)
+        self.n_basis = int(n_basis)
+        self.custom_knots = custom_knots
+        self.population_parameters  = ['mmin', 'mmax']
+        self.population_parameters += [f'c{i}' for i in range(self.n_basis)]
+
+        # Knot and grid placeholders
+        self.t       = None
+        self._x_grid = None
+        self._m_grid = None
+        self._B_grid = None
+        self.coeffs  = None
+
+    def bspline_basis(self, x, t, k = 3, xp = None):
+
+        if xp is None:
+            import numpy as xp
+        x = xp.asarray(x)
+        t = xp.asarray(t)
+        n_basis = len(t) - k - 1
+
+        B = xp.zeros((len(x), n_basis), dtype = x.dtype)
+        for i in range(n_basis):
+            B[:, i] = xp.where((x >= t[i]) & (x < t[i+1]), 1.0, 0.0)
+        B[x == t[-1], -1] = 1.0  # Special case last knot.
+
+        # Cox-de Boor recursion.
+        for d in range(1, k+1):
+            B_new = xp.zeros_like(B)
+            for i in range(n_basis):
+                denom1 = t[i+d] - t[i]
+                term1 = xp.zeros_like(x)
+                if denom1 > 0:
+                    term1 = ((x - t[i]) / denom1) * B[:, i]
+
+                denom2 = t[i+d+1] - t[i+1] if (i+1 < n_basis) else 0.0
+                term2 = xp.zeros_like(x)
+                if i+1 < n_basis and denom2 > 0:
+                    term2 = ((t[i+d+1] - x) / denom2) * B[:, i+1]
+
+                B_new[:, i] = term1 + term2
+            B = B_new
+
+        return B
+
+    def build_minimal_knots(self, xp, k, segments = None):
+        '''
+            Construct interior knots to ensure one basis function can be fully
+            contained in each target segment, minimizing n_basis.
+
+            Returns log-space open knot vector.
+        '''
+        if segments is None:
+            # Define segments manually to ensure coverage of key mass ranges.
+            segments = [(8.0,12.0), (15.0,25.0), (25.0,45.0), (45.0,80.0)]
+
+        S = k + 1  # Number of knot intervals per target basis.
+        interior_points = []
+
+        for a,b in segments:
+            for j in range(1, S):
+                interior_points.append(a + (b-a) * j / S)
+        
+        boundaries = [s[0] for s in segments] + [segments[-1][1]] # Include segment boundaries.
+        all_interior = xp.array(sorted(set(interior_points + boundaries)))
+        interior_log = xp.log(all_interior) # Convert to log-space.
+        xmin, xmax = xp.log(self.mmin), xp.log(self.mmax)
+        t = xp.concatenate((xp.repeat(xmin, k+1), interior_log, xp.repeat(xmax, k+1)))
+
+        return t
+
+    def _setup_grid_and_knots(self, xp, use_minimal_knots = False):
+        '''
+            Recompute knots and precompute basis grid after mmin/mmax change.
+        '''
+        self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
+        if use_minimal_knots:
+            self.t = self.build_minimal_knots(xp, self.degree)
+        else:
+            n_interior = max(1, self.n_basis - self.degree - 1)
+            interior = xp.linspace(self.xmin, self.xmax, n_interior)
+            self.t = xp.concatenate((
+                xp.repeat(self.xmin, self.degree+1),
+                interior,
+                xp.repeat(self.xmax, self.degree+1)
+            ))
+
+        self._x_grid = xp.linspace(self.xmin, self.xmax, 1000)
+        self._m_grid = xp.exp(self._x_grid)
+        self._B_grid = self.bspline_basis(self._x_grid, self.t, k = self.degree, xp = xp)
+
+    def update(self, **kwargs):
+
+        xp = get_module_array([kwargs['mmin']])
+        self.mmin = kwargs['mmin']
+        self.mmax = kwargs['mmax']
+        self._setup_grid_and_knots(xp, use_minimal_knots = self.custom_knots)
+
+        self.coeffs = xp.asarray([kwargs[f'c{i}'] for i in range(self.n_basis)], dtype = xp.float64)
+
+    def eval_spline(self, m):
+
+        xp = get_module_array(m)
+        x = xp.log(xp.asarray(m))
+        x_flat = x.ravel()
+        B = self.bspline_basis(x_flat, self.t, k = self.degree, xp = xp)
+        coeffs_xp = xp.asarray(self.coeffs)
+        s_flat = B.dot(coeffs_xp)
+
+        return s_flat.reshape(x.shape)
+
+    def logZ(self):
+
+        xp = get_module_array(self._m_grid)
+        B_grid_xp = xp.asarray(self._B_grid)
+        coeffs_xp = xp.asarray(self.coeffs)
+        s_grid = B_grid_xp.dot(coeffs_xp)
+        s_max = xp.max(s_grid) # Prevent overflow.
+        integrand = xp.exp(s_grid - s_max)
+        Z = xp.trapezoid(integrand, self._m_grid)
+
+        return xp.log(Z + 1e-300) + s_max
+
+    def pdf(self, m):
+        xp = get_module_array(m)
+        s = self.eval_spline(m)
+        lZ = self.logZ()
+        return xp.exp(s - lZ)
+
+    def log_pdf(self, m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m) + 1e-300)
