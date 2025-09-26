@@ -1171,12 +1171,13 @@ class CBC_HI_vanilla_rate(object):
     scale_free: bool
         True if you want to use the model for scale-free likelihood (no R0)
     '''
-    def __init__(self,HI_map,cosmology_wrapper,rate_wrapper,scale_free=False):
+    def __init__(self,HI_map,cosmology_wrapper,rate_wrapper,scale_free=False,PE_average = False):
         
         self.HI_map = HI_map
         self.cw = cosmology_wrapper
         self.rw = rate_wrapper
         self.scale_free = scale_free
+        self.PE_average = PE_average
         
         if scale_free:
             self.population_parameters =  self.cw.population_parameters+self.rw.population_parameters
@@ -1215,14 +1216,19 @@ class CBC_HI_vanilla_rate(object):
             The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
         '''
         xp = get_module_array(prior)
-        
+        sx=get_module_array_scipy(prior)
+
         z = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
       
-
-        rho_HI = self.HI_map.drho_dzdomega(z,kwargs['sky_indices'],self.cw.cosmology,
-                                           dl=kwargs['luminosity_distance'],average=False)
-
-
+        if not self.PE_average:
+            rho_HI = self.HI_map.drho_dzdomega(z,kwargs['sky_indices'],self.cw.cosmology,
+                                            dl=kwargs['luminosity_distance'],average=False)
+        else:
+            # Cycle on number of events
+            rho_HI = xp.zeros_like(z)
+            for i in range(len(self.HI.list_PE_averaged_density)):
+                rho_HI[i,:] = self.list_PE_averaged_density[i](z[i,:])
+                
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z))
         
         # The Jacobian here only comes from the dl -> z conversion. There is no mass as we are working with toy models.

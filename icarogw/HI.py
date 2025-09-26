@@ -19,6 +19,24 @@ class HI_map(object):
         self.density_matrix = np.log(density_matrix) 
         self.density_matrix_average = np.log(xp.mean(density_matrix,axis=1)) # Check axis 
 
+    def event_averaged_density(self,posterior_samples_catalog):
+
+        sx=get_module_array_scipy(z)
+        N_events = len(posterior_samples_catalog.posterior_samples_dict)
+        events = list(posterior_samples_catalog.posterior_samples_dict.keys())
+
+        self.list_PE_averaged_density = []
+        for i in range(N_events):
+            skyind = posterior_samples_catalog.posterior_samples_dict[events[i]].posterior_data['sky_indices']
+            dm = np.vstack([np.exp(self.density_matrix[:,j]) 
+                              for j in skyind])
+            # Averaged over skymap
+            avv = np.log(np.mean(dm,axis=0))
+
+            self.list_PE_averaged_density.append(sx.interpolate.interp1d(self.redshift_grid,avv,kind='linear',bounds_error=False,
+                                                  fill_value=-np.inf))
+
+            
 
     def drho_dzdomega(self,z,skypos,cosmology,dl=None,average=False):
         '''
