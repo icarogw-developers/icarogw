@@ -16,9 +16,10 @@ class HI_map(object):
         xp=get_module_array(redshift_grid)
         self.redshift_grid = redshift_grid
         self.pixel_grid = pixel_grid
-        self.density_matrix = density_matrix   
-        self.density_matrix_average = xp.mean(density_matrix,axis=1) # Check axis 	
-    
+        self.density_matrix = np.log(density_matrix) 
+        self.density_matrix_average = np.log(xp.mean(density_matrix,axis=1)) # Check axis 
+
+
     def drho_dzdomega(self,z,skypos,cosmology,dl=None,average=False):
         '''
         Parameters
@@ -52,10 +53,15 @@ class HI_map(object):
         pixel_grid = self.pixel_grid
                 
         if average:
-            interpolant = sx.interpolate.interp1d(z_grid,dNgal_dzdOm_sky_mean,kind='linear',fill_value='extrapolate')
+            #interpolant = sx.interpolate.interp1d(z_grid,dNgal_dzdOm_sky_mean,kind='linear',fill_value='extrapolate')
+            interpolant = sx.interpolate.interp1d(z_grid,dNgal_dzdOm_sky_mean,kind='linear',bounds_error=False,
+                                                  fill_value=-np.inf) # If a posterior samples fall outside, then you return0
             gcpart=interpolant(z)
         else:
             gcpart=sx.interpolate.interpn((z_grid,pixel_grid),dNgal_dzdOm_vals,xp.column_stack([z,skypos]),bounds_error=False,
-                                fill_value=None,method='linear') # If a posterior samples fall outside, then you return0
+                                fill_value=-np.inf,method='linear') # If a posterior samples fall outside, then you return0
+            #gcpart=sx.interpolate.interpn((z_grid,pixel_grid),dNgal_dzdOm_vals,xp.column_stack([z,skypos]),bounds_error=False,
+            #                    fill_value=np.array([1e-10]),method='linear') # If a posterior samples fall outside, then you return0
+        
         
         return gcpart.reshape(originshape)

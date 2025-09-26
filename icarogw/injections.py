@@ -61,7 +61,6 @@ class injections(object):
         '''
         xp = get_module_array(self.log_weights)
         sx = get_module_array_scipy(self.log_weights)
-
         mean = xp.exp(sx.special.logsumexp(self.log_weights))/self.ntotal
         var = xp.exp(sx.special.logsumexp(2*self.log_weights))/(self.ntotal**2)-(mean**2)/self.ntotal
         return (mean**2)/var

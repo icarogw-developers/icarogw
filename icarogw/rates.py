@@ -1217,15 +1217,23 @@ class CBC_HI_vanilla_rate(object):
         xp = get_module_array(prior)
         
         z = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
+      
 
         rho_HI = self.HI_map.drho_dzdomega(z,kwargs['sky_indices'],self.cw.cosmology,
                                            dl=kwargs['luminosity_distance'],average=False)
+
 
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z))
         
         # The Jacobian here only comes from the dl -> z conversion. There is no mass as we are working with toy models.
         # TO-DO Double check rate parametrization
-        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +xp.log(rho_HI) \
+        # print if any value of rho_HI is negative
+        #print("Negative rho_HI values:", (rho_HI < 0).any())
+        #print("rho_HI values:", rho_HI)
+        #print('negative redshift', z[rho_HI < 0])
+        #log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + xp.log(rho_HI) +\
+        #-xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
+        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + rho_HI +\
         -xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
             
         if not self.scale_free:
@@ -1253,13 +1261,16 @@ class CBC_HI_vanilla_rate(object):
         # The injections are calulated with average True
         rho_HI = self.HI_map.drho_dzdomega(z,kwargs['sky_indices'],self.cw.cosmology,
                                            dl=kwargs['luminosity_distance'],average=True)
-
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z))
         
         # The Jacobian here only comes from the dl -> z conversion. There is no mass as we are working with toy models.
         # TO-DO Double check rate parametrization
-        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +xp.log(rho_HI) \
+        #log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +xp.log(rho_HI) \
+        #-xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
+        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +rho_HI +\
         -xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
+
+
             
         if not self.scale_free:
             log_out = log_weights + xp.log(self.RHI)

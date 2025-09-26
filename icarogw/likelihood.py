@@ -62,11 +62,13 @@ class hierarchical_likelihood(bilby.Likelihood):
         xp = get_module_array(self.injections.log_weights)
         
         if (Neff<self.neffINJ) | (Neff==0.):
+            print('Not enough injections to evaluate the selection bias, Neff = ', Neff, ' needed > ', self.neffINJ)
             return float(xp.nan_to_num(-xp.inf))
         
         # Update the weights on the PE
         self.posterior_samples_dict.update_weights(self.rate_model)
         if xp.any(self.posterior_samples_dict.get_effective_number_of_PE()<self.neffPE):
+            print('Not enough PE samples to evaluate the likelihood, NeffPE = ', self.posterior_samples_dict.get_effective_number_of_PE().min(), self.posterior_samples_dict.get_effective_number_of_PE().max(), ' needed > ', self.neffPE)
             return float(xp.nan_to_num(-xp.inf))
                      
         # Combine all the terms  
