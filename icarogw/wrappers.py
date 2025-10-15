@@ -1296,8 +1296,8 @@ class PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear():
         self.mmin_b_z1    = kwargs['mmin_b_z1']
         self.mmax_b_z0    = kwargs['mmax_b_z0']
         self.mmax_b_z1    = kwargs['mmax_b_z1']
-        self.alpha_c_z0   = kwargs['alpha_b_z0']
-        self.alpha_c_z1   = kwargs['alpha_b_z1']
+        self.alpha_c_z0   = kwargs['alpha_c_z0']
+        self.alpha_c_z1   = kwargs['alpha_c_z1']
         self.mmin_c_z0    = kwargs['mmin_c_z0']
         self.mmin_c_z1    = kwargs['mmin_c_z1']
         self.mmax_c_z0    = kwargs['mmax_c_z0']
@@ -1324,7 +1324,7 @@ class PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear():
                 raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
         else:
             wz_alpha = xp.array(self.mix_alpha_z0)
-            wz_beta  = xp.array(self.mix_beta_z0)
+            wz_beta  = xp.array(self.mix_beta_z0 )
 
         powerlaw_class_a = PowerLawLinear(z, self.alpha_a_z0, self.alpha_a_z1, self.mmin_a_z0, self.mmin_a_z1, self.mmax_a_z0, self.mmax_a_z1)
         powerlaw_class_b = PowerLawLinear(z, self.alpha_b_z0, self.alpha_b_z1, self.mmin_b_z0, self.mmin_b_z1, self.mmax_b_z0, self.mmax_b_z1)
@@ -1345,6 +1345,116 @@ class PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear():
             return xp.nan
         else:
             return wz_alpha * powerlaw_part_a + wz_beta * powerlaw_part_b + (1 - wz_beta - wz_alpha) * powerlaw_part_c
+    
+    def log_pdf(self,m,z):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m,z))
+
+
+class PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear_PowerLawRedshiftLinear():
+    '''
+        Class implementing the mass function model conditioned on redshift p(m1|z),
+        for four redshift linearly-dependent PowerLaws.
+
+        Some options are available:
+            - redshift_transition sets the function for the redshift transition
+            between the PowerLaws (a, b, c and d).
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaws.
+            The smoothing slows heavily down the model evaluation.
+            - flag_redshift_mixture allows for the transition functions to evolve with redshift.
+
+        The module is stand alone and not compatible with other wrappers.
+    '''
+
+    def __init__(self, redshift_transition = 'linear', flag_powerlaw_smoothing = 0, flag_redshift_mixture = 1):
+        
+        self.population_parameters   = ['alpha_a_z0', 'alpha_a_z1', 'mmin_a_z0', 'mmin_a_z1', 'mmax_a_z0', 'mmax_a_z1', 'alpha_b_z0', 'alpha_b_z1', 'mmin_b_z0', 'mmin_b_z1', 'mmax_b_z0', 'mmax_b_z1', 'alpha_c_z0', 'alpha_c_z1', 'mmin_c_z0', 'mmin_c_z1', 'mmax_c_z0', 'mmax_c_z1', 'alpha_d_z0', 'alpha_d_z1', 'mmin_d_z0', 'mmin_d_z1', 'mmax_d_z0', 'mmax_d_z1', 'mix_alpha_z0', 'mix_beta_z0', 'mix_gamma_z0']
+        self.redshift_transition     = redshift_transition
+        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+        self.flag_redshift_mixture   = flag_redshift_mixture
+
+        if self.flag_redshift_mixture:
+            self.population_parameters += ['mix_alpha_z1', 'mix_beta_z1', 'mix_gamma_z1']
+        if self.flag_powerlaw_smoothing:
+            self.population_parameters += ['delta_m_a', 'delta_m_b', 'delta_m_c', 'delta_m_d']
+
+    def update(self,**kwargs):
+
+        self.alpha_a_z0   = kwargs['alpha_a_z0']
+        self.alpha_a_z1   = kwargs['alpha_a_z1']
+        self.mmin_a_z0    = kwargs['mmin_a_z0']
+        self.mmin_a_z1    = kwargs['mmin_a_z1']
+        self.mmax_a_z0    = kwargs['mmax_a_z0']
+        self.mmax_a_z1    = kwargs['mmax_a_z1']
+        self.alpha_b_z0   = kwargs['alpha_b_z0']
+        self.alpha_b_z1   = kwargs['alpha_b_z1']
+        self.mmin_b_z0    = kwargs['mmin_b_z0']
+        self.mmin_b_z1    = kwargs['mmin_b_z1']
+        self.mmax_b_z0    = kwargs['mmax_b_z0']
+        self.mmax_b_z1    = kwargs['mmax_b_z1']
+        self.alpha_c_z0   = kwargs['alpha_c_z0']
+        self.alpha_c_z1   = kwargs['alpha_c_z1']
+        self.mmin_c_z0    = kwargs['mmin_c_z0']
+        self.mmin_c_z1    = kwargs['mmin_c_z1']
+        self.mmax_c_z0    = kwargs['mmax_c_z0']
+        self.mmax_c_z1    = kwargs['mmax_c_z1']
+        self.alpha_d_z0   = kwargs['alpha_d_z0']
+        self.alpha_d_z1   = kwargs['alpha_d_z1']
+        self.mmin_d_z0    = kwargs['mmin_d_z0']
+        self.mmin_d_z1    = kwargs['mmin_d_z1']
+        self.mmax_d_z0    = kwargs['mmax_d_z0']
+        self.mmax_d_z1    = kwargs['mmax_d_z1']
+        self.mix_alpha_z0 = kwargs['mix_alpha_z0']
+        self.mix_beta_z0  = kwargs['mix_beta_z0']
+        self.mix_gamma_z0 = kwargs['mix_gamma_z0']
+
+        if self.flag_redshift_mixture:
+            self.mix_alpha_z1 = kwargs['mix_alpha_z1']
+            self.mix_beta_z1  = kwargs['mix_beta_z1']
+            self.mix_gamma_z1 = kwargs['mix_gamma_z1']
+        if self.flag_powerlaw_smoothing:
+            self.delta_m_a    = kwargs['delta_m_a']
+            self.delta_m_b    = kwargs['delta_m_b']
+            self.delta_m_c    = kwargs['delta_m_c']
+            self.delta_m_d    = kwargs['delta_m_d']
+
+    def pdf(self,m,z):
+
+        xp = get_module_array(m)
+        if self.flag_redshift_mixture:
+            if   self.redshift_transition == 'linear':
+                wz_alpha = _mixed_linear_function(z, self.mix_alpha_z0, self.mix_alpha_z1)
+                wz_beta  = _mixed_linear_function(z, self.mix_beta_z0,  self.mix_beta_z1 )
+                wz_gamma = _mixed_linear_function(z, self.mix_gamma_z0, self.mix_gamma_z1)
+            else:
+                raise ValueError('The slected redshift transition model {} does not exist. Exiting.'.format(self.redshift_transition))
+        else:
+            wz_alpha = xp.array(self.mix_alpha_z0)
+            wz_beta  = xp.array(self.mix_beta_z0 )
+            wz_gamma = xp.array(self.mix_gamma_z0)
+
+        powerlaw_class_a = PowerLawLinear(z, self.alpha_a_z0, self.alpha_a_z1, self.mmin_a_z0, self.mmin_a_z1, self.mmax_a_z0, self.mmax_a_z1)
+        powerlaw_class_b = PowerLawLinear(z, self.alpha_b_z0, self.alpha_b_z1, self.mmin_b_z0, self.mmin_b_z1, self.mmax_b_z0, self.mmax_b_z1)
+        powerlaw_class_c = PowerLawLinear(z, self.alpha_c_z0, self.alpha_c_z1, self.mmin_c_z0, self.mmin_c_z1, self.mmax_c_z0, self.mmax_c_z1)
+        powerlaw_class_d = PowerLawLinear(z, self.alpha_d_z0, self.alpha_d_z1, self.mmin_d_z0, self.mmin_d_z1, self.mmax_d_z0, self.mmax_d_z1)
+        # Add left smoothing to the evolving PowerLaw.
+        # WARNING: The implementation is very slow, because the integral to normalise the windowed
+        # distribution p(m1|z) needs to be computed at all redshifts corresponding to the PE samples and injections.
+        if self.flag_powerlaw_smoothing:
+            powerlaw_class_a = LowpassSmoothedProbEvolving(powerlaw_class_a, self.delta_m_a)
+            powerlaw_class_b = LowpassSmoothedProbEvolving(powerlaw_class_b, self.delta_m_b)
+            powerlaw_class_c = LowpassSmoothedProbEvolving(powerlaw_class_c, self.delta_m_c)
+            powerlaw_class_d = LowpassSmoothedProbEvolving(powerlaw_class_d, self.delta_m_d)
+        powerlaw_part_a  = powerlaw_class_a.pdf(m)
+        powerlaw_part_b  = powerlaw_class_b.pdf(m)
+        powerlaw_part_c  = powerlaw_class_c.pdf(m)
+        powerlaw_part_d  = powerlaw_class_d.pdf(m)
+
+        # Impose the rate to be between [0,1].
+        if (xp.any(wz_alpha > 1)) or (xp.any(wz_alpha < 0)) or (xp.any(wz_beta > 1)) or (xp.any(wz_beta < 0)) or (xp.any(wz_gamma > 1)) or (xp.any(wz_gamma < 0)) or (xp.any(wz_alpha + wz_beta + wz_gamma > 1)):
+            return xp.nan
+        else:
+            return wz_alpha * powerlaw_part_a + wz_beta * powerlaw_part_b + wz_gamma * powerlaw_part_c + (1 - wz_beta - wz_alpha - wz_gamma) * powerlaw_part_d
     
     def log_pdf(self,m,z):
         xp = get_module_array(m)
@@ -1661,7 +1771,7 @@ class Splines:
         self.n_basis = int(n_basis)
         self.custom_knots = custom_knots
 
-        self.population_parameters = ['mmin', 'mmax'] + [f'c{i}' for i in range(self.n_basis)]
+        self.population_parameters = ['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis-1)]
 
     def bspline_basis(self, x: "array", t: "array", xp: Optional["module"] = None, k: int = 3) -> "array":
         """Compute B-spline basis functions using Cox-de Boor recursion."""
@@ -1746,21 +1856,25 @@ class Splines:
         xp = get_module_array([self.mmin])
         self._setup_grid_and_knots(xp, use_minimal_knots=self.custom_knots)
 
-        coeffs_list = [kwargs[f'c{i}'] for i in range(self.n_basis)]
-        self.coeffs = xp.array(coeffs_list, dtype=xp.float64)
+        n_basis = len(self.t) - self.degree - 1
+        coeff_keys = [f'c{i}' for i in range(1, n_basis - 1)]
+        coeffs_list = [0.0] + [kwargs.get(k, 0.0) for k in coeff_keys] + [0.0]
+        self.coeffs = xp.asarray(coeffs_list, dtype=xp.float64)
 
     def eval_spline(self, m: "array") -> "array":
         """Evaluate the spline at mass m."""
         xp = get_module_array(m)
         x = xp.log(xp.asarray(m, dtype=xp.float64))
         B = self.bspline_basis(x.ravel(), self.t, k=self.degree, xp=xp)
-        s_flat = B.dot(self.coeffs)
+        coeffs = xp.asarray(self.coeffs, dtype=xp.float64)
+        s_flat = B.dot(coeffs)
         return s_flat.reshape(x.shape)
 
     def logZ(self) -> "array":
         """Compute log-normalization factor."""
         xp = get_module_array(self._m_grid)
-        s_grid = self._B_grid.dot(self.coeffs)
+        coeffs = xp.asarray(self.coeffs, dtype=xp.float64)
+        s_grid = self._B_grid.dot(coeffs)
         s_max = xp.max(s_grid)
         integrand = xp.exp(s_grid - s_max)
         Z = xp.trapezoid(integrand, self._m_grid)
