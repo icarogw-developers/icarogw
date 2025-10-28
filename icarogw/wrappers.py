@@ -1766,11 +1766,11 @@ class Splines:
         population_parameters (list): List of parameters: mmin, mmax, and coefficients.
     """
 
-    def __init__(self, n_basis: int = 10, degree: int = 2, custom_knots: bool = False):
+    def __init__(self, n_basis: int = 10, degree: int = 2, spacing: str = "log"):
+
         self.degree = int(degree)
         self.n_basis = int(n_basis)
-        self.custom_knots = custom_knots
-
+        self.spacing = spacing
         self.population_parameters = ['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis-1)]
 
     def bspline_basis(self, x: "array", t: "array", xp: Optional["module"] = None, k: int = 3) -> "array":
@@ -1811,50 +1811,36 @@ class Splines:
 
         return B
 
-    def build_minimal_knots(self, xp: "module", k: int, segments: Optional[Sequence[Tuple[float, float]]] = None) -> "array":
+    def _setup_grid_and_knots(self, xp: "module"):
         """
-        Construct minimal interior knots so each basis function fits within a segment.
-        Returns a log-space open knot vector.
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "linear") to control spacing type.
         """
-        if segments is None:
-            segments = [(8.0, 12.0), (15.0, 25.0), (25.0, 45.0), (45.0, 80.0)]
+        spacing = self.spacing
+        if spacing not in {"log", "linear"}:
+                raise ValueError(f"Invalid spacing: {spacing!r}. Must be 'log' or 'linear'.")
+        
+        if spacing == "log":
+            self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
+            from_x = xp.exp
+        else:  # linear
+            self.xmin, self.xmax = self.mmin, self.mmax
+            from_x = lambda x: x
 
-        S = k + 1
-        segments_arr = xp.array(segments, dtype=xp.float64)
-        a, b = segments_arr[:, 0:1], segments_arr[:, 1:2]
-
-        j = xp.arange(1, S).reshape(1, -1)
-        interior_points = a + (b - a) * j / S
-
-        boundaries = xp.array([s[0] for s in segments] + [segments[-1][1]], dtype=xp.float64)
-        all_points = xp.unique(xp.concatenate([interior_points.ravel(), boundaries]))
-        interior_log = xp.log(all_points)
-
-        xmin, xmax = xp.log(self.mmin), xp.log(self.mmax)
-        t = xp.concatenate([xp.repeat(xmin, k + 1), interior_log, xp.repeat(xmax, k + 1)])
-        return t
-
-    def _setup_grid_and_knots(self, xp: "module", use_minimal_knots: bool = False):
-        """Recompute knots and precompute B-spline basis grid."""
-        self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
-
-        if use_minimal_knots:
-            self.t = self.build_minimal_knots(xp, self.degree)
-        else:
-            n_interior = max(1, self.n_basis - self.degree - 1)
-            interior = xp.linspace(self.xmin, self.xmax, n_interior, dtype=xp.float64)
-            t_start, t_end = xp.repeat(self.xmin, self.degree + 1), xp.repeat(self.xmax, self.degree + 1)
-            self.t = xp.concatenate([t_start, interior, t_end])
+        n_interior = max(1, self.n_basis - self.degree - 1)
+        interior = xp.linspace(self.xmin, self.xmax, n_interior, dtype=xp.float64)
+        t_start, t_end = xp.repeat(self.xmin, self.degree + 1), xp.repeat(self.xmax, self.degree + 1)
+        self.t = xp.concatenate([t_start, interior, t_end])
 
         self._x_grid = xp.linspace(self.xmin, self.xmax, 1000, dtype=xp.float64)
-        self._m_grid = xp.exp(self._x_grid)
+        self._m_grid = from_x(self._x_grid)
         self._B_grid = self.bspline_basis(self._x_grid, self.t, xp=xp, k=self.degree)
 
     def update(self, **kwargs):
         """Update spline parameters and coefficients."""
         self.mmin, self.mmax = kwargs['mmin'], kwargs['mmax']
         xp = get_module_array([self.mmin])
-        self._setup_grid_and_knots(xp, use_minimal_knots=self.custom_knots)
+        self._setup_grid_and_knots(xp)
 
         n_basis = len(self.t) - self.degree - 1
         coeff_keys = [f'c{i}' for i in range(1, n_basis - 1)]
@@ -1864,7 +1850,9 @@ class Splines:
     def eval_spline(self, m: "array") -> "array":
         """Evaluate the spline at mass m."""
         xp = get_module_array(m)
-        x = xp.log(xp.asarray(m, dtype=xp.float64))
+        m = xp.asarray(m, dtype=xp.float64)
+        if self.spacing == "log": x = xp.log(m)
+        else:                     x = m
         B = self.bspline_basis(x.ravel(), self.t, k=self.degree, xp=xp)
         coeffs = xp.asarray(self.coeffs, dtype=xp.float64)
         s_flat = B.dot(coeffs)
