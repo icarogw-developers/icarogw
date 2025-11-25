@@ -1881,3 +1881,56 @@ class Splines:
         s = self.eval_spline(m)
         lZ = self.logZ()
         return s - lZ
+
+
+class Gaussian():
+
+    def __init__(self):
+        self.population_parameters = ['mu', 'sigma', 'mmin', 'mmax']
+
+    def update(self,**kwargs):
+        self.mu    = kwargs['mu']
+        self.sigma = kwargs['sigma']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+    def pdf(self,m):
+        tmp = TruncatedGaussian(self.mu, self.sigma, self.mmin, self.mmax)
+        return tmp.pdf(m)
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
+
+
+class PowerLaw():
+
+    def __init__(self, flag_powerlaw_smoothing = 1):
+        
+        self.population_parameters   = ['alpha', 'mmin', 'mmax']
+        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+
+        if self.flag_powerlaw_smoothing: self.population_parameters += ['delta_m']
+
+    def update(self,**kwargs):
+
+        self.alpha = kwargs['alpha']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+        if self.flag_powerlaw_smoothing:
+            self.delta_m = kwargs['delta_m']
+
+    def pdf(self,m):
+
+        powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
+        # Add left smoothing to the PowerLaw.
+        if self.flag_powerlaw_smoothing:
+            powerlaw_class = LowpassSmoothedProb(powerlaw_class, self.delta_m)
+        powerlaw_part = powerlaw_class.pdf(m)
+
+        return powerlaw_part
+    
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
