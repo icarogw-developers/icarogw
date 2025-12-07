@@ -1,7 +1,7 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, is_there_cupy
 from .conversions import radec2indeces, indices2radec, M2m, m2M
 from .cosmology import galaxy_MF, log_powerlaw_absM_rate, astropycosmology
-from astropy.cosmology import Planck15
+from astropy.cosmology import Planck15, FlatLambdaCDM
 
 import healpy as hp
 import h5py
@@ -611,8 +611,10 @@ class  icarogw_catalog(object):
                         self.sch_fun.build_effective_number_density_interpolant(epsilon)
                         # Initialize a cosmology with zmax at double the distance
                         cosmology_proxy = astropycosmology(zmax=self.z_grid[-1]*2)
-                        cosmology_proxy.build_cosmology(Planck15)
-                        self.sch_fun.build_MF(cosmology_proxy)
+                        cosmo_to_build = Planck15
+                        if 'mice' in self.band:
+                            cosmo_to_build = FlatLambdaCDM(H0=70., Om0=0.25, Ob0=0.044) # MICE cosmology
+                        cosmology_proxy.build_cosmology(cosmo_to_build)
                         dl_proxy=cosmology_proxy.z2dl(self.z_grid)
                         loaded_sch = True
 
@@ -628,7 +630,10 @@ class  icarogw_catalog(object):
         self.dNgal_dzdOm_vals = np.zeros_like(self.dNgal_dzdOm_vals)
         self.dNgal_dzdOm_vals_av = np.zeros_like(self.dNgal_dzdOm_vals_av)
         cosmology_proxy = astropycosmology(zmax=self.z_grid[-1]*2)
-        cosmology_proxy.build_cosmology(Planck15)
+        cosmo_to_build = Planck15
+        if 'mice' in self.band:
+            cosmo_to_build = FlatLambdaCDM(H0=70., Om0=0.25, Ob0=0.044) # MICE cosmology
+        cosmology_proxy.build_cosmology(cosmo_to_build)
         self.sch_fun.build_MF(cosmology_proxy)
         self.bg_vals_av = self.sch_fun.background_effective_galaxy_density(-np.inf*np.ones_like(self.z_grid),self.z_grid)*cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid)
         
@@ -936,9 +941,12 @@ class kcorr(object):
             W1, K or bJ band. Others are not implemented
         '''
         self.band=band
-        if self.band not in ['W1-glade+','K-glade+','bJ-glade+','W1-upglade','g-upglade','r-upglade']:
+        if self.band not in ['W1-glade+','K-glade+','bJ-glade+','W1-upglade','g-upglade','r-upglade'
+                             'u-mice','g-mice','r-mice','i-mice','z-mice']:
             raise ValueError('Band not known please use either {:s}'.format(' '.join(['W1-glade+','K-glade+','bJ-glade+',
-                                                                                     'W1-upglade','g-upglade','r-upglade'])))
+                                                                                     'W1-upglade','g-upglade','r-upglade',
+                                                                                     'u-mice','g-mice','r-mice',
+                                                                                      'i-mice','z-mice'])))
     def __call__(self,z, k0 = None, dkbydz=None, z0 = None):
         '''
         Evaluates the K-corrections at a given redshift, See Eq. 2 of https://arxiv.org/abs/astro-ph/0210394
@@ -972,6 +980,9 @@ class kcorr(object):
             k_corr=(z+6*xp.power(z,2.))/(1+20.*xp.power(z,3.))
         elif (self.band == 'W1-upglade') | (self.band == 'g-upglade') | (self.band == 'r-upglade'):
             k_corr = k0+dkbydz*(z-z0)
+        # --- MICE bands ---
+        elif (self.band == 'u-mice') | (self.band == 'g-mice') | (self.band == 'r-mice') | (self.band == 'i-mice') | (self.band == 'z-mice'):
+            k_corr = xp.zeros_like(z, dtype=float) # FIXME : no k-correction for the moment
         return k_corr
 
 # LVK Reviewed
