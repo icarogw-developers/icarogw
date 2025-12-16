@@ -31,7 +31,7 @@ class posterior_samples_catalog(object):
         
         # Saves the minimum number of samples to use per event
         nsamps=np.array([self.posterior_samples_dict[key].nsamples for key in self.posterior_samples_dict.keys()])        
-        self.nparallel=nparallel
+        self.nparallel = int(nsamps.min()) if nparallel is None else int(nparallel)
         llev=list(self.posterior_samples_dict.keys()) # Name of events
         print('\n\tUsing {:d} samples from each of the {:d} event posteriors.'.format(self.nparallel,self.n_ev))
         
