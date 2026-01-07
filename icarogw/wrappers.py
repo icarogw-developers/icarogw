@@ -1,4 +1,4 @@
-from .cupy_pal import get_module_array, get_module_array_scipy, np
+from .cupy_pal import get_module_array, get_module_array_scipy, np, _detect_xp_and_dtype
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
@@ -7,7 +7,6 @@ from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, Gaus
 from .priors import BrokenPowerLawTripleMultiPeak
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
-from typing import Optional, Sequence, Tuple
 
 modgravity_wrappers = ['eps0_mod_wrap','Xi0_mod_wrap','extraD_mod_wrap',
                       'cM_mod_wrap','alphalog_mod_wrap']
@@ -1755,182 +1754,540 @@ class GaussianEvolving():
         return self.muz, self.sigmaz
 
 
-class Splines:
+###########
+# Splines #
+###########
+
+def _safe_divide(xp, numer, denom, dtype = None):
     """
-    B-Spline mass function model p(m) in log-mass space.
+    Safe elementwise divide: out = numer / denom but do not divide where denom == 0.
+    Works with NumPy and CuPy. Returns an array shaped like denom (broadcast rules apply).
+    """
+    try:
+        out = xp.zeros_like(denom, dtype=dtype) if dtype is not None else xp.zeros_like(denom)
+    except Exception:
+        # fallback: create with denom's dtype
+        out = xp.zeros_like(denom)
+    # perform in-place safe division on device
+    xp.divide(numer, denom, out=out, where=(denom != 0.0))
+    return out
 
-    Attributes:
-        n_basis (int): Number of basis functions / coefficients.
-        degree (int): Degree of the spline.
-        custom_knots (bool): Whether to use minimal knots.
-        population_parameters (list): List of parameters: mmin, mmax, and coefficients.
+
+class QuadraticSpline:
+    """
+    Vectorized quadratic B-spline model (degree 2), GPU-friendly.
+
+    Monomial coefficient ordering: [a0, a1, a2] with
+      P(x) = a0 + a1 * x + a2 * x^2
     """
 
-    def __init__(self, n_basis: int = 10, degree: int = 2, spacing: str = "log"):
-
-        self.degree = int(degree)
-        self.n_basis = int(n_basis)
+    def __init__(self, n_basis: int = 6, spacing: str = "uniform"):
+        # compatibility: user supplies interior_count and we add +2
+        self.n_basis = int(n_basis) + 2
+        self.degree = 2
         self.spacing = spacing
-        self.population_parameters = ['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis-1)]
 
-    def bspline_basis(self, x: "array", t: "array", xp: Optional["module"] = None, k: int = 3) -> "array":
-        """Compute B-spline basis functions using Cox-de Boor recursion."""
-        if xp is None:
-            import numpy as xp
+        if spacing not in ("uniform", "log"):
+            raise ValueError("spacing must be 'uniform' or 'log'")
 
-        x = xp.asarray(x, dtype=xp.float64)
-        t = xp.asarray(t, dtype=xp.float64)
-        n_basis = len(t) - k - 1
-        n_points = len(x)
+        self.population_parameters = (['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis - 1)])
 
-        # Zeroth-degree basis
-        B = xp.zeros((n_points, n_basis), dtype=x.dtype)
-        for i in range(n_basis):
-            B[:, i] = xp.where((x >= t[i]) & (x < t[i + 1]), 1.0, 0.0)
-        B[x == t[-1], -1] = 1.0
+        # placeholders
+        self.xmin = None
+        self.xmax = None
+        self.weights = None   # shape (n_basis,)
+        self.knots = None     # shape (n_knots,)
+        self.Q = None         # shape (n_spans, 3)
+        self.norm = None
 
-        # Cox-de Boor recursion
-        for d in range(1, k + 1):
-            t_i = t[:n_basis]
-            t_id = t[d:n_basis + d]
-            t_ip1 = t[1:n_basis + 1]
-            t_ip1d1 = t[d + 1:n_basis + d + 1]
+        # backend (numpy or cupy) and dtype (float32 on GPU by default)
+        self.xp = get_module_array([self.n_basis])
+        self.xp, self.dtype = _detect_xp_and_dtype(self.xp)
 
-            denom1 = xp.where(t_id - t_i > 0, t_id - t_i, 1.0)
-            denom2 = xp.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
+    def _make_knots(self):
+        k = self.degree
+        n = self.n_basis
+        xp = self.xp
 
-            term1 = ((x[:, None] - t_i[None, :]) / denom1[None, :]) * B
-            term1 = xp.where(denom1[None, :] > 0, term1, 0.0)
+        if self.spacing == "uniform":
+            interior = xp.linspace(self.xmin, self.xmax, n - k + 1, dtype=self.dtype)
+        else:
+            if self.xmin <= 0:
+                raise ValueError("log spacing requires mmin > 0")
+            interior = xp.exp(xp.linspace(xp.log(self.xmin), xp.log(self.xmax), n - k + 1, dtype=self.dtype))
 
-            term2 = xp.zeros_like(B)
-            if n_basis > 1:
-                term2[:, :-1] = ((t_ip1d1[None, :-1] - x[:, None]) / denom2[None, :-1]) * B[:, 1:]
-                term2 = xp.where(denom2[None, :] > 0, term2, 0.0)
+        return xp.concatenate([xp.full(k + 1, interior[0], dtype=self.dtype), interior[1:-1], xp.full(k + 1, interior[-1], dtype=self.dtype)])
 
-            B = term1 + term2
-
-        return B
-
-    def _setup_grid_and_knots(self, xp: "module"):
+    def _mono_to_bern_quadratic_vec(self, mono, t0, t1):
         """
-        Recompute knots and precompute B-spline basis grid.
-        Uses self.spacing ("log" or "linear") to control spacing type.
+        Vectorized conversion mono -> Bernstein for quadratics.
+        mono: (...,3) representing [a0, a1, a2] -> P(x) = a0 + a1 x + a2 x^2
+        t0, t1: arrays broadcastable to mono[...,0]
+        returns: (...,3) Bernstein control points [C0,C1,C2]
         """
-        spacing = self.spacing
-        if spacing not in {"log", "linear"}:
-                raise ValueError(f"Invalid spacing: {spacing!r}. Must be 'log' or 'linear'.")
-        
-        if spacing == "log":
-            self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
-            from_x = xp.exp
-        else:  # linear
-            self.xmin, self.xmax = self.mmin, self.mmax
-            from_x = lambda x: x
+        xp = self.xp
+        # convert to polynomial coefficient order used in earlier formulas:
+        # a (x^2) = mono[...,2], b (x) = mono[...,1], c (const) = mono[...,0]
+        a = mono[..., 2]
+        b = mono[..., 1]
+        c = mono[..., 0]
+        h = t1 - t0
 
-        n_interior = max(1, self.n_basis - self.degree - 1)
-        interior = xp.linspace(self.xmin, self.xmax, n_interior, dtype=xp.float64)
-        t_start, t_end = xp.repeat(self.xmin, self.degree + 1), xp.repeat(self.xmax, self.degree + 1)
-        self.t = xp.concatenate([t_start, interior, t_end])
+        Q0 = a * (t0 * t0) + b * t0 + c
+        Q2 = a * (t1 * t1) + b * t1 + c
+        Q1 = Q0 + 0.5 * h * (2.0 * a * t0 + b)
 
-        self._x_grid = xp.linspace(self.xmin, self.xmax, 1000, dtype=xp.float64)
-        self._m_grid = from_x(self._x_grid)
-        self._B_grid = self.bspline_basis(self._x_grid, self.t, xp=xp, k=self.degree)
+        return xp.stack([Q0, Q1, Q2], axis=-1)
 
+    def _build_bernstein_representation(self):
+        """
+        Fully vectorized quadratic builder:
+        - compute contributions for local offsets 0,1,2 in bulk
+        - scatter-accumulate into Q (n_spans, 3)
+        """
+        xp = self.xp
+        t = self.knots
+        w = self.weights
+        n = self.n_basis
+        n_spans = int(t.size - 1)
+
+        Q = xp.zeros((n_spans, 3), dtype=self.dtype)
+        idx = xp.arange(n, dtype=int)
+
+        # gather per-basis knot arrays
+        t0 = t.take(idx)
+        t1 = t.take(idx + 1)
+        t2 = t.take(idx + 2)
+        t3 = t.take(idx + 3)
+
+        # --- span i (local offset 0) ---
+        d0 = (t2 - t0) * (t1 - t0)
+        mask0 = d0 > 0
+
+        if mask0.any():
+            # use safe divide to avoid divide-by-zero warnings
+            a0 = _safe_divide(xp, 1.0, d0, dtype=self.dtype)
+            b0 = _safe_divide(xp, -2.0 * t0, d0, dtype=self.dtype)
+            c0 = _safe_divide(xp, t0 * t0, d0, dtype=self.dtype)
+
+            # assemble monos in increasing order [a0_const, a1_x, a2_x2]
+            mono0 = xp.stack([c0, b0, a0], axis=-1)  # shape (n,3)
+            ctrl0 = self._mono_to_bern_quadratic_vec(mono0, t0, t1)  # (n,3)
+            inds0 = idx[mask0]
+
+            Q[inds0] += ctrl0[mask0] * w[mask0, None]
+
+        # --- span i+1 (local offset 1) ---
+        d1 = (t2 - t0) * (t2 - t1)
+        d2 = (t3 - t1) * (t2 - t1)
+        mask1 = (d1 > 0) & (d2 > 0)
+
+        if mask1.any():
+            term1 = _safe_divide(xp, 1.0, d1, dtype=self.dtype)
+            term2 = _safe_divide(xp, 1.0, d2, dtype=self.dtype)
+
+            a1 = - (term1 + term2)
+            b1 = _safe_divide(xp, (t0 + t2), d1, dtype=self.dtype) + _safe_divide(xp, (t1 + t3), d2, dtype=self.dtype)
+            c1 = - (_safe_divide(xp, t0 * t2, d1, dtype=self.dtype) + _safe_divide(xp, t1 * t3, d2, dtype=self.dtype))
+
+            mono1 = xp.stack([c1, b1, a1], axis=-1)
+            ctrl1 = self._mono_to_bern_quadratic_vec(mono1, t1, t2)
+            inds1 = (idx + 1)[mask1]
+
+            Q[inds1] += ctrl1[mask1] * w[mask1, None]
+
+        # --- span i+2 (local offset 2) ---
+        d3 = (t3 - t1) * (t3 - t2)
+        mask2 = d3 > 0
+
+        if mask2.any():
+            a2 = _safe_divide(xp, 1.0, d3, dtype=self.dtype)
+            b2 = _safe_divide(xp, -2.0 * t3, d3, dtype=self.dtype)
+            c2 = _safe_divide(xp, t3 * t3, d3, dtype=self.dtype)
+
+            mono2 = xp.stack([c2, b2, a2], axis=-1)
+            ctrl2 = self._mono_to_bern_quadratic_vec(mono2, t2, t3)
+            inds2 = (idx + 2)[mask2]
+
+            Q[inds2] += ctrl2[mask2] * w[mask2, None]
+
+        self.Q = Q
+        h = xp.diff(t)
+        self.norm = xp.sum(xp.where(h > 0, h * xp.sum(Q, axis=1) / 3.0, 0.0))
+
+        if float(self.norm) <= 0.0:
+            raise ValueError("Spline has zero integral")
+
+    # ------------------
+    # Update / evaluate
+    # ------------------
     def update(self, **kwargs):
-        """Update spline parameters and coefficients."""
-        self.mmin, self.mmax = kwargs['mmin'], kwargs['mmax']
-        xp = get_module_array([self.mmin])
-        self._setup_grid_and_knots(xp)
+        self.xmin = kwargs['mmin']
+        self.xmax = kwargs['mmax']
+        xp = self.xp
 
-        n_basis = len(self.t) - self.degree - 1
-        coeff_keys = [f'c{i}' for i in range(1, n_basis - 1)]
-        coeffs_list = [0.0] + [kwargs.get(k, 0.0) for k in coeff_keys] + [0.0]
-        self.coeffs = xp.asarray(coeffs_list, dtype=xp.float64)
+        # assemble weights (interior coefficients only)
+        w = xp.zeros(self.n_basis, dtype=self.dtype)
+        for i in range(1, self.n_basis - 1):
+            w[i] = kwargs[f'c{i}']
 
-    def eval_spline(self, m: "array") -> "array":
-        """Evaluate the spline at mass m."""
-        xp = get_module_array(m)
-        m = xp.asarray(m, dtype=xp.float64)
-        if self.spacing == "log": x = xp.log(m)
-        else:                     x = m
-        B = self.bspline_basis(x.ravel(), self.t, k=self.degree, xp=xp)
-        coeffs = xp.asarray(self.coeffs, dtype=xp.float64)
-        s_flat = B.dot(coeffs)
-        return s_flat.reshape(x.shape)
-
-    def logZ(self) -> "array":
-        """Compute log-normalization factor."""
-        xp = get_module_array(self._m_grid)
-        coeffs = xp.asarray(self.coeffs, dtype=xp.float64)
-        s_grid = self._B_grid.dot(coeffs)
-        s_max = xp.max(s_grid)
-        integrand = xp.exp(s_grid - s_max)
-        Z = xp.trapezoid(integrand, self._m_grid)
-        return xp.log(Z + 1e-300) + s_max
-
-    def pdf(self, m: "array") -> "array":
-        """Evaluate normalized probability density function at m."""
-        xp = get_module_array(m)
-        s = self.eval_spline(m)
-        lZ = self.logZ()
-        return xp.exp(s - lZ)
-
-    def log_pdf(self, m: "array") -> "array":
-        """Evaluate log of normalized probability density function at m."""
-        xp = get_module_array(m)
-        s = self.eval_spline(m)
-        lZ = self.logZ()
-        return s - lZ
-
-
-class Gaussian():
-
-    def __init__(self):
-        self.population_parameters = ['mu', 'sigma', 'mmin', 'mmax']
-
-    def update(self,**kwargs):
-        self.mu    = kwargs['mu']
-        self.sigma = kwargs['sigma']
-        self.mmin  = kwargs['mmin']
-        self.mmax  = kwargs['mmax']
-
-    def pdf(self,m):
-        tmp = TruncatedGaussian(self.mu, self.sigma, self.mmin, self.mmax)
-        return tmp.pdf(m)
-
-    def log_pdf(self,m):
-        xp = get_module_array(m)
-        return xp.log(self.pdf(m))
-
-
-class PowerLaw():
-
-    def __init__(self, flag_powerlaw_smoothing = 1):
+        s = float(xp.sum(w))
+        if s <= 0:
+            raise ValueError("sum of weights must be > 0")
         
-        self.population_parameters   = ['alpha', 'mmin', 'mmax']
-        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+        self.weights = (w / s).astype(self.dtype)
+        self.knots = self._make_knots()
+        self._build_bernstein_representation()
 
-        if self.flag_powerlaw_smoothing: self.population_parameters += ['delta_m']
+    def _bernstein_quadratic(self, u):
+        xp = self.xp
+        u = xp.asarray(u, dtype=self.dtype)
+        return xp.stack([(1 - u) ** 2, 2 * u * (1 - u), u ** 2], axis=-1)
 
-    def update(self,**kwargs):
+    def basis(self, i, x):
+        """
+        Evaluate basis i by rebuilding Q with only that basis active (cheap for n_basis small).
+        """
+        xp = self.xp
+        if i < 0 or i >= self.n_basis:
+            raise IndexError("Invalid basis index")
+        x = xp.asarray(x, dtype=self.dtype)
 
-        self.alpha = kwargs['alpha']
-        self.mmin  = kwargs['mmin']
-        self.mmax  = kwargs['mmax']
+        # temporarily set weights to select basis i
+        w_saved = self.weights
+        Q_saved = self.Q
 
-        if self.flag_powerlaw_smoothing:
-            self.delta_m = kwargs['delta_m']
+        try:
+            w_sel = xp.zeros_like(self.weights)
+            w_sel[i] = 1.0
+            self.weights = w_sel
+            self._build_bernstein_representation()
+            Q_i = self.Q.copy()
+        finally:
+            # restore weights and Q without rebuilding full Q
+            self.weights = w_saved
+            self.Q = Q_saved
 
-    def pdf(self,m):
+        spans = xp.searchsorted(self.knots, x, side="right") - 1
+        spans = xp.clip(spans, 0, len(Q_i) - 1)
+        t0s = self.knots[spans]
+        t1s = self.knots[spans + 1]
+        h = t1s - t0s
+        u = xp.zeros_like(x, dtype=self.dtype)
+        mask = h > 0
+        u[mask] = (x[mask] - t0s[mask]) / h[mask]
 
-        powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
-        # Add left smoothing to the PowerLaw.
-        if self.flag_powerlaw_smoothing:
-            powerlaw_class = LowpassSmoothedProb(powerlaw_class, self.delta_m)
-        powerlaw_part = powerlaw_class.pdf(m)
+        B = self._bernstein_quadratic(u)
+        return xp.sum(B * Q_i[spans], axis=1)
 
-        return powerlaw_part
-    
-    def log_pdf(self,m):
-        xp = get_module_array(m)
-        return xp.log(self.pdf(m))
+    def evaluate(self, x):
+        xp = self.xp
+        x = xp.asarray(x, dtype=self.dtype)
+
+        spans = xp.searchsorted(self.knots, x, side="right") - 1
+        spans = xp.clip(spans, 0, len(self.Q) - 1)
+        t0 = self.knots[spans]
+        t1 = self.knots[spans + 1]
+        h = t1 - t0
+        u = xp.zeros_like(x, dtype=self.dtype)
+        mask = h > 0
+        u[mask] = (x[mask] - t0[mask]) / h[mask]
+
+        B = self._bernstein_quadratic(u)
+        return xp.sum(B * self.Q[spans], axis=1)
+
+    def pdf(self, x):
+        return self.evaluate(x) / self.norm
+
+
+class CubicSpline:
+    """
+    Vectorized cubic B-spline model (degree 3), GPU-friendly.
+
+    Monomial coefficient ordering: [a0, a1, a2, a3] with
+      P(x) = a0 + a1 * x + a2 * x^2 + a3 * x^3
+    """
+
+    def __init__(self, n_basis: int = 6, spacing: str = "uniform"):
+        self.n_basis = int(n_basis) + 2
+        self.degree = 3
+        self.spacing = spacing
+
+        if spacing not in ("uniform", "log"):
+            raise ValueError("spacing must be 'uniform' or 'log'")
+        
+        self.population_parameters = (['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis - 1)])
+
+        self.xmin = None
+        self.xmax = None
+        self.weights = None   # shape (n_basis,)
+        self.knots = None     # shape (n_knots,)
+        self.Q = None         # (n_spans, 4)
+        self.norm = None
+
+        # backend (numpy or cupy) and dtype (float32 on GPU by default)
+        self.xp = get_module_array([self.n_basis])
+        self.xp, self.dtype = _detect_xp_and_dtype(self.xp)
+
+    def _make_knots(self):
+        k = self.degree
+        n = self.n_basis
+        xp = self.xp
+
+        if self.spacing == "uniform":
+            interior = xp.linspace(self.xmin, self.xmax, n - k + 1, dtype=self.dtype)
+        else:
+            if self.xmin <= 0:
+                raise ValueError("log spacing requires mmin > 0")
+            interior = xp.exp(xp.linspace(xp.log(self.xmin), xp.log(self.xmax), n - k + 1, dtype=self.dtype))
+
+        return xp.concatenate([xp.full(k + 1, interior[0], dtype=self.dtype), interior[1:-1], xp.full(k + 1, interior[-1], dtype=self.dtype)])
+
+    def _mono_to_bern_cubic_vec(self, mono, t0, t1):
+        """
+        Vectorized mono->Bernstein for cubics.
+        mono: (m,4) with columns [a0,a1,a2,a3] (increasing order)
+        t0, t1: arrays shape (m,)
+        returns: (m,4) Bernstein control points [C0..C3]
+        """
+        xp = self.xp
+
+        a0 = mono[:, 0]
+        a1 = mono[:, 1]
+        a2 = mono[:, 2]
+        a3 = mono[:, 3]
+        h = t1 - t0
+        t0b = t0
+        b0 = a0 + a1 * t0b + a2 * (t0b ** 2) + a3 * (t0b ** 3)
+        b1 = h * (a1 + 2.0 * t0b * a2 + 3.0 * (t0b ** 2) * a3)
+        b2 = (h ** 2) * (a2 + 3.0 * t0b * a3)
+        b3 = (h ** 3) * a3
+
+        C0 = b0
+        C1 = b0 + (1.0 / 3.0) * b1
+        C2 = b0 + (2.0 / 3.0) * b1 + (1.0 / 3.0) * b2
+        C3 = b0 + b1 + b2 + b3
+
+        return xp.stack([C0, C1, C2, C3], axis=-1)
+
+    def _build_bernstein_representation(self):
+        """
+        Fully vectorized cubic builder using safe divides.
+        """
+        xp = self.xp
+        t = self.knots
+        w = self.weights
+        n = self.n_basis
+        n_spans = int(t.size - 1)
+
+        Q = xp.zeros((n_spans, 4), dtype=self.dtype)
+        idx = xp.arange(n, dtype=int)
+
+        # gather per-basis knots vectors (length n)
+        k0 = t.take(idx)
+        k1 = t.take(idx + 1)
+        k2 = t.take(idx + 2)
+        k3 = t.take(idx + 3)
+        k4 = t.take(idx + 4)
+
+        # Quadratic coefficients for N_{i,2} on spans i,i+1,i+2 (vectorized) using safe divides
+        d0 = (k2 - k0) * (k1 - k0)
+        aq0 = _safe_divide(xp, 1.0, d0, dtype=self.dtype)
+        bq0 = _safe_divide(xp, -2.0 * k0, d0, dtype=self.dtype)
+        cq0 = _safe_divide(xp, k0 * k0, d0, dtype=self.dtype)
+
+        d1 = (k2 - k0) * (k2 - k1)
+        d2 = (k3 - k1) * (k2 - k1)
+        term1 = _safe_divide(xp, 1.0, d1, dtype=self.dtype)
+        term2 = _safe_divide(xp, 1.0, d2, dtype=self.dtype)
+        aq1 = - (term1 + term2)
+        bq1 = _safe_divide(xp, (k0 + k2), d1, dtype=self.dtype) + _safe_divide(xp, (k1 + k3), d2, dtype=self.dtype)
+        cq1 = - (_safe_divide(xp, k0 * k2, d1, dtype=self.dtype) + _safe_divide(xp, k1 * k3, d2, dtype=self.dtype))
+
+        d3 = (k3 - k1) * (k3 - k2)
+        aq2 = _safe_divide(xp, 1.0, d3, dtype=self.dtype)
+        bq2 = _safe_divide(xp, -2.0 * k3, d3, dtype=self.dtype)
+        cq2 = _safe_divide(xp, k3 * k3, d3, dtype=self.dtype)
+
+        # Quadratic coefficients for N_{i+1,2} on spans i+1,i+2,i+3 (shifted) using safe divides
+        d0p = (k3 - k1) * (k2 - k1)
+        ap0 = _safe_divide(xp, 1.0, d0p, dtype=self.dtype)
+        bp0 = _safe_divide(xp, -2.0 * k1, d0p, dtype=self.dtype)
+        cp0 = _safe_divide(xp, k1 * k1, d0p, dtype=self.dtype)
+
+        d1p = (k3 - k1) * (k3 - k2)
+        d2p = (k4 - k2) * (k3 - k2)
+        term1p = _safe_divide(xp, 1.0, d1p, dtype=self.dtype)
+        term2p = _safe_divide(xp, 1.0, d2p, dtype=self.dtype)
+        ap1 = - (term1p + term2p)
+        bp1 = _safe_divide(xp, (k1 + k3), d1p, dtype=self.dtype) + _safe_divide(xp, (k2 + k4), d2p, dtype=self.dtype)
+        cp1 = - (_safe_divide(xp, k1 * k3, d1p, dtype=self.dtype) + _safe_divide(xp, k2 * k4, d2p, dtype=self.dtype))
+
+        d3p = (k4 - k2) * (k4 - k3)
+        ap2 = _safe_divide(xp, 1.0, d3p, dtype=self.dtype)
+        bp2 = _safe_divide(xp, -2.0 * k4, d3p, dtype=self.dtype)
+        cp2 = _safe_divide(xp, k4 * k4, d3p, dtype=self.dtype)
+
+        # denominators in Cox-de Boor cubic recurrence
+        L = k3 - k0
+        R = k4 - k1
+
+        # compute per-basis cubic coefficients for each local span (i..i+3) using safe divides
+        s0_A3 = _safe_divide(xp, aq0, L, dtype=self.dtype)
+        s0_A2 = _safe_divide(xp, (bq0 - aq0 * k0), L, dtype=self.dtype)
+        s0_A1 = _safe_divide(xp, (cq0 - bq0 * k0), L, dtype=self.dtype)
+        s0_A0 = _safe_divide(xp, (-cq0 * k0), L, dtype=self.dtype)
+
+        # Span i+1: left (aq1...) and right (ap0...)
+        L3 = _safe_divide(xp, aq1, L, dtype=self.dtype)
+        L2 = _safe_divide(xp, (bq1 - aq1 * k0), L, dtype=self.dtype)
+        L1 = _safe_divide(xp, (cq1 - bq1 * k0), L, dtype=self.dtype)
+        L0 = _safe_divide(xp, (-cq1 * k0), L, dtype=self.dtype)
+
+        R3 = _safe_divide(xp, -ap0, R, dtype=self.dtype)
+        R2 = _safe_divide(xp, (ap0 * k4 - bp0), R, dtype=self.dtype)
+        R1 = _safe_divide(xp, (bp0 * k4 - cp0), R, dtype=self.dtype)
+        R0 = _safe_divide(xp, (cp0 * k4), R, dtype=self.dtype)
+
+        s1_A3 = L3 + R3
+        s1_A2 = L2 + R2
+        s1_A1 = L1 + R1
+        s1_A0 = L0 + R0
+
+        # Span i+2: left (aq2...) and right (ap1...)
+        L3 = _safe_divide(xp, aq2, L, dtype=self.dtype)
+        L2 = _safe_divide(xp, (bq2 - aq2 * k0), L, dtype=self.dtype)
+        L1 = _safe_divide(xp, (cq2 - bq2 * k0), L, dtype=self.dtype)
+        L0 = _safe_divide(xp, (-cq2 * k0), L, dtype=self.dtype)
+
+        R3 = _safe_divide(xp, -ap1, R, dtype=self.dtype)
+        R2 = _safe_divide(xp, (ap1 * k4 - bp1), R, dtype=self.dtype)
+        R1 = _safe_divide(xp, (bp1 * k4 - cp1), R, dtype=self.dtype)
+        R0 = _safe_divide(xp, (cp1 * k4), R, dtype=self.dtype)
+
+        s2_A3 = L3 + R3
+        s2_A2 = L2 + R2
+        s2_A1 = L1 + R1
+        s2_A0 = L0 + R0
+
+        # Span i+3: only right (ap2...)
+        s3_A3 = _safe_divide(xp, -ap2, R, dtype=self.dtype)
+        s3_A2 = _safe_divide(xp, (ap2 * k4 - bp2), R, dtype=self.dtype)
+        s3_A1 = _safe_divide(xp, (bp2 * k4 - cp2), R, dtype=self.dtype)
+        s3_A0 = _safe_divide(xp, (cp2 * k4), R, dtype=self.dtype)
+
+        # For each local offset j = 0..3, gather mono coeffs for all bases and scatter to Q at s = i + j.
+        for local_j, (A0_arr, A1_arr, A2_arr, A3_arr) in enumerate([
+            (s0_A0, s0_A1, s0_A2, s0_A3),
+            (s1_A0, s1_A1, s1_A2, s1_A3),
+            (s2_A0, s2_A1, s2_A2, s2_A3),
+            (s3_A0, s3_A1, s3_A2, s3_A3),
+        ]):
+            s_indices = idx + local_j
+            # mask valid spans
+            valid_mask = (s_indices >= 0) & (s_indices < n_spans)
+
+            if not xp.any(valid_mask):
+                continue
+
+            # select masked entries
+            sel = valid_mask
+            sel_i = idx[sel]             # basis indices selected
+            sel_s = s_indices[sel]       # corresponding span indices
+
+            # prepare monomial array for these selected basis-span pairs, shape (m,4)
+            mono_sel = xp.stack([A0_arr[sel], A1_arr[sel], A2_arr[sel], A3_arr[sel]], axis=-1)
+            # get span endpoints for these selected spans
+            t0_sel = t.take(sel_s)
+            t1_sel = t.take(sel_s + 1)
+            # compute Bernstein control points for all selected entries
+            ctrl = self._mono_to_bern_cubic_vec(mono_sel, t0_sel, t1_sel)  # (m,4)
+
+            # accumulate weighted contributions into Q at rows sel_s
+            Q[sel_s] += (w[sel_i, None] * ctrl)
+
+        self.Q = Q
+        h = xp.diff(t)
+        self.norm = xp.sum(xp.where(h > 0, h * xp.sum(Q, axis=1) / 4.0, 0.0))
+
+        if float(self.norm) <= 0.0:
+            raise ValueError("Spline has zero integral")
+
+    # ------------------
+    # Update / evaluate
+    # ------------------
+    def update(self, **kwargs):
+        self.xmin = kwargs['mmin']
+        self.xmax = kwargs['mmax']
+        xp = self.xp
+
+        # assemble weights (interior coefficients only)
+        w = xp.zeros(self.n_basis, dtype=self.dtype)
+        for i in range(1, self.n_basis - 1):
+            w[i] = kwargs[f'c{i}']
+
+        s = float(xp.sum(w))
+        if s <= 0:
+            raise ValueError("sum of weights must be > 0")
+        
+        self.weights = (w / s).astype(self.dtype)
+        self.knots = self._make_knots()
+        self._build_bernstein_representation()
+
+    def _bernstein_cubic(self, u):
+        xp = self.xp
+        u = xp.asarray(u, dtype=self.dtype)
+        one_minus = (1 - u)
+        return xp.stack([one_minus ** 3, 3 * u * (one_minus ** 2), 3 * (u ** 2) * one_minus, u ** 3], axis=-1)
+
+    def basis(self, i, x):
+        xp = self.xp
+        if i < 0 or i >= self.n_basis:
+            raise IndexError("Invalid basis index")
+        x = xp.asarray(x, dtype=self.dtype)
+
+        # temporarily set weights to select basis i
+        w_saved = self.weights
+        Q_saved = self.Q
+
+        try:
+            w_sel = xp.zeros_like(self.weights)
+            w_sel[i] = 1.0
+            self.weights = w_sel
+            self._build_bernstein_representation()
+            Q_i = self.Q.copy()
+        finally:
+            # restore weights and Q without rebuilding full Q
+            self.weights = w_saved
+            self.Q = Q_saved
+
+        spans = xp.searchsorted(self.knots, x, side="right") - 1
+        spans = xp.clip(spans, 0, len(Q_i) - 1)
+        t0s = self.knots[spans]
+        t1s = self.knots[spans + 1]
+        h = t1s - t0s
+        u = xp.zeros_like(x, dtype=self.dtype)
+        mask = h > 0
+        u[mask] = (x[mask] - t0s[mask]) / h[mask]
+
+        B = self._bernstein_cubic(u)
+        return xp.sum(B * Q_i[spans], axis=1)
+
+    def evaluate(self, x):
+        xp = self.xp
+        x = xp.asarray(x, dtype=self.dtype)
+
+        spans = xp.searchsorted(self.knots, x, side="right") - 1
+        spans = xp.clip(spans, 0, len(self.Q) - 1)
+        t0 = self.knots[spans]
+        t1 = self.knots[spans + 1]
+        h = t1 - t0
+        u = xp.zeros_like(x, dtype=self.dtype)
+        mask = h > 0
+        u[mask] = (x[mask] - t0[mask]) / h[mask]
+        
+        B = self._bernstein_cubic(u)
+        return xp.sum(B * self.Q[spans], axis=1)
+
+    def pdf(self, x):
+        return self.evaluate(x) / self.norm

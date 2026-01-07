@@ -105,4 +105,26 @@ def iscupy(array):
     else:
         return False
 
+def _detect_xp_and_dtype(array_example):
+    """
+    Determine xp (numpy or cupy) and a sensible default dtype.
 
+    This uses the existing get_module_array(array) helper to pick the array
+    module from a representative array-like `array_example`. If `dtype` is
+    provided it is returned unchanged; otherwise the default is:
+      - float32 when using CuPy (GPU)
+      - float64 when using NumPy (CPU)
+
+    Signature changed to accept a representative array (or value) from which
+    get_module_array can infer the correct module.
+    """
+    xp = get_module_array(array_example)
+
+    # Heuristic: prefer float32 for CuPy, float64 for NumPy.
+    # Use getattr to be safe if module doesn't expose float32/float64.
+    is_cupy = getattr(xp, "__name__", "") == "cupy" or hasattr(xp, "cuda")
+    if is_cupy:
+        chosen = getattr(xp, "float32", xp.float32)
+    else:
+        chosen = getattr(xp, "float64", xp.float64)
+    return xp, chosen
