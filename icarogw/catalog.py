@@ -874,17 +874,54 @@ class  icarogw_catalog(object):
 
 
 #############################################
-# A set of function from gwcosmo below to query the gwcosmo 
-# galaxy catalogs
-
+# A set of functions from gwcosmo below to query the gwcosmo 
+# galaxy catalogues
+ 
 def gwcosmo_get_offset(LOS_catalog):
+    '''
+    Returns the GW cosmo offset from the LOS file
+    
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+
+    Returns
+    -------
+    Offset
+    '''
     diction = eval(LOS_catalog.attrs['opts'])
     return diction["offset"]
 
 def gwcosmo_get_z_array(LOS_catalog):
+    '''
+    Returns the GWcosmo zgrid used for the file
+    
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+
+    Returns
+    -------
+    redshift grid
+    '''
     return LOS_catalog['z_array'][:]
 
 def gwcosmo_get_array(LOS_catalog, arr_name):
+    '''
+    Returns the LOS redshift prior (including completeness correction) for a given pixel
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+    arr_name: integer
+        GWcosmo pixel
+
+    Returns
+    -------
+    LOS values: np.array
+    '''
     offset = gwcosmo_get_offset(LOS_catalog)
 
     arr = LOS_catalog[str(arr_name)][:]
@@ -894,42 +931,117 @@ def gwcosmo_get_array(LOS_catalog, arr_name):
     return arr
 
 def gwcosmo_get_empty_catalog(LOS_catalog):
+    '''
+    Gets the empty catalog LOS prior
+    
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+
+    Returns
+    -------
+    Empty catalog LOS prior
+    '''
     return gwcosmo_get_array(LOS_catalog, "empty_catalogue")
 
 def gwcosmo_get_zprior_full_sky(LOS_catalog):
+    '''
+    Gets the sky-averaged LOS prior (including completeness corrections)
+    
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+
+    Returns
+    -------
+    Sky-averaged catalog LOS prior
+    '''
     return gwcosmo_get_array(LOS_catalog, "combined_pixels")
 
 def gwcosmo_get_zprior(LOS_catalog, pixel_index):
+    '''
+    Get the empty catalog LOS prior
+
+    Parameters
+    ----------
+    LOS_catalog: str
+        String pointing to the GWcosmo hdf5 file
+    pixel_index: int
+        Pixel index for the sky direction
+
+    Returns
+    -------
+    Sky-wise LOS prior
+    '''
     return gwcosmo_get_array(LOS_catalog, str(pixel_index))
 
 
 class gwcosmo_catalog(object):
+    '''
+    This is a class to host the GWcosmo catalog in a icarogw format
+    '''
     def __init__(self,gwcosmo_file,nside,band,epsilon):
+        '''
+        Initialize the catalog
+        Parameters
+        ----------
+        gwcosmo_file: str
+            String pointing to the gwcosmo file
+        nside: int
+            nside used in gwcosmo to generate the catalog
+        band: str
+            EM band as implemente in the icarogw Schecter function
+        epsilon: float
+            Luminosity weight L^epsilon
+        '''
         self.band = band
         self.epsilon = epsilon
         self.nside = nside
         self.sch_fun=galaxy_MF(band=self.band)
+        # update the schecter function
         self.sch_fun.build_effective_number_density_interpolant(self.epsilon)
         self.sky_grid = np.arange(0,hp.nside2npix(nside),1).astype(int)
+        # Read the gwcosmo file and allocate redshift grid and LOS in matrices and arrays
         with h5py.File(gwcosmo_file,'r') as gwcosmo:
+            # Redshift grid
             self.z_grid = gwcosmo_get_z_array(gwcosmo)
+            # Empty cat LOS (array)
             self.pz_empty = gwcosmo_get_empty_catalog(gwcosmo)
+            # Sky-averaged LOS (array)
             self.dNgal_dzdOm_vals_av = gwcosmo_get_zprior_full_sky(gwcosmo)
+            # Matrix N_grid X N_pixels for the sky-wise LOS
             self.dNgal_dzdOm_vals = []
             for ipix in self.sky_grid:
                 self.dNgal_dzdOm_vals.append(gwcosmo_get_zprior(gwcosmo,ipix))
         self.dNgal_dzdOm_vals = np.column_stack(self.dNgal_dzdOm_vals)
         
     def make_me_empty(self):
+        '''
+        Artificially makes the catalog empty
+        '''
         self.dNgal_dzdOm_vals_av = self.pz_empty
         self.dNgal_dzdOm_vals = np.column_stack([self.pz_empty for i in range(hp.nside2npix(self.nside))])
         
     def get_NUNIQ_pixel(self,ra,dec):
+        '''
+        Get the healpy index as if it was in gwcosmo
+        
+        Parameters
+        ----------
+        ra, dec: np.arrays of floats
+            Right ascension and declination in rad
+
+        Returns
+        -------
+        Healpy index according to gwcosmo ordering
+        '''
         return hp.ang2pix(self.nside,np.pi/2-dec,ra,nest=True) 
 
     def effective_galaxy_number_interpolant(self,z,skypos,cosmology,dl=None,average=False): 
         '''
-        Note that everything here is in the in-catalog part
+        Gets the LOS prior from GWcosmo
         '''
         xp=get_module_array(z)
         sx=get_module_array_scipy(z)
@@ -948,11 +1060,11 @@ class gwcosmo_catalog(object):
         
         if average:
             gcpart=xp.interp(z,z_grid,self.dNgal_dzdOm_vals_av,left=0.,right=0.)
-            bgpart=xp.zeros_like(gcpart)           
+            bgpart=xp.zeros_like(gcpart) # This is set to 0 as GWcosmo provides the total LOS          
         else:
             gcpart=sx.interpolate.interpn((z_grid,pixel_grid),dNgal_dzdOm_vals,xp.column_stack([z,skypos]),bounds_error=False,
                                 fill_value=0.,method='linear') 
-            bgpart=xp.zeros_like(gcpart)           
+            bgpart=xp.zeros_like(gcpart) # This is set to 0 as GWcosmo provides the total LOS           
 
         return gcpart.reshape(originshape),bgpart.reshape(originshape)
 
