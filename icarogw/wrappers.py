@@ -1,4 +1,4 @@
-from .cupy_pal import get_module_array, get_module_array_scipy, np, _detect_xp_and_dtype
+from .cupy_pal import get_module_array, get_module_array_scipy, np, _set_xp_and_dtype
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
@@ -1760,16 +1760,41 @@ class GaussianEvolving():
 
 def _safe_divide(xp, numer, denom, dtype = None):
     """
-    Safe elementwise divide: out = numer / denom but do not divide where denom == 0.
-    Works with NumPy and CuPy. Returns an array shaped like denom (broadcast rules apply).
+    Safe elementwise divide: out = numer / denom but skip positions where denom == 0.
+
+    - xp: numpy or cupy module
+    - numer, denom: scalars or arrays broadcastable to a common shape
+    - dtype: optional output dtype (prefer self.dtype)
     """
+    denom_b = xp.asarray(denom)
+    numer_b = xp.asarray(numer)
     try:
-        out = xp.zeros_like(denom, dtype=dtype) if dtype is not None else xp.zeros_like(denom)
+        numer_b, denom_b = xp.broadcast_arrays(numer_b, denom_b)
     except Exception:
-        # fallback: create with denom's dtype
-        out = xp.zeros_like(denom)
-    # perform in-place safe division on device
-    xp.divide(numer, denom, out=out, where=(denom != 0.0))
+        numer_b = xp.full_like(denom_b, numer_b, dtype=denom_b.dtype)
+
+    out_dtype = dtype if dtype is not None else denom_b.dtype
+    out = xp.zeros_like(denom_b, dtype=out_dtype)
+
+    # fast path: ufunc with where if supported
+    try:
+        xp.divide(numer_b, denom_b, out=out, where=(denom_b != 0))
+        return out
+    except TypeError:
+        # fallback: masked assignment (works on older CuPy)
+        mask = denom_b != 0
+        out[mask] = numer_b[mask] / denom_b[mask]
+        return out
+
+def _safe_log(xp, p):
+    out = xp.full_like(p, -xp.inf)
+    try:
+        xp.log(p, out=out, where=(p > 0))
+    except TypeError:
+        # older CuPy may not accept `where`; do masked assignment instead
+        mask = p > 0
+        if mask.size:  # no heavy sync; .size is metadata
+            out[mask] = xp.log(p[mask])
     return out
 
 
@@ -1782,7 +1807,7 @@ class QuadraticSpline:
     """
 
     def __init__(self, n_basis: int = 6, spacing: str = "uniform"):
-        # compatibility: user supplies interior_count and we add +2
+        # Compatibility: user supplies interior_count and we add +2
         self.n_basis = int(n_basis) + 2
         self.degree = 2
         self.spacing = spacing
@@ -1792,17 +1817,16 @@ class QuadraticSpline:
 
         self.population_parameters = (['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis - 1)])
 
-        # placeholders
+        # Placeholders
         self.xmin = None
         self.xmax = None
-        self.weights = None   # shape (n_basis,)
-        self.knots = None     # shape (n_knots,)
-        self.Q = None         # shape (n_spans, 3)
+        self.weights = None # Shape (n_basis,)
+        self.knots = None # Shape (n_knots,)
+        self.Q = None # Shape (n_spans, 3)
         self.norm = None
 
-        # backend (numpy or cupy) and dtype (float32 on GPU by default)
-        self.xp = get_module_array([self.n_basis])
-        self.xp, self.dtype = _detect_xp_and_dtype(self.xp)
+        # Backend (numpy or cupy) and dtype (float32 on GPU by default)
+        self.xp, self.dtype = _set_xp_and_dtype()
 
     def _make_knots(self):
         k = self.degree
@@ -1826,7 +1850,7 @@ class QuadraticSpline:
         returns: (...,3) Bernstein control points [C0,C1,C2]
         """
         xp = self.xp
-        # convert to polynomial coefficient order used in earlier formulas:
+        # Convert to polynomial coefficient order used in earlier formulas:
         # a (x^2) = mono[...,2], b (x) = mono[...,1], c (const) = mono[...,0]
         a = mono[..., 2]
         b = mono[..., 1]
@@ -1854,7 +1878,7 @@ class QuadraticSpline:
         Q = xp.zeros((n_spans, 3), dtype=self.dtype)
         idx = xp.arange(n, dtype=int)
 
-        # gather per-basis knot arrays
+        # Gather per-basis knot arrays
         t0 = t.take(idx)
         t1 = t.take(idx + 1)
         t2 = t.take(idx + 2)
@@ -1862,54 +1886,64 @@ class QuadraticSpline:
 
         # --- span i (local offset 0) ---
         d0 = (t2 - t0) * (t1 - t0)
-        mask0 = d0 > 0
 
-        if mask0.any():
-            # use safe divide to avoid divide-by-zero warnings
-            a0 = _safe_divide(xp, 1.0, d0, dtype=self.dtype)
-            b0 = _safe_divide(xp, -2.0 * t0, d0, dtype=self.dtype)
-            c0 = _safe_divide(xp, t0 * t0, d0, dtype=self.dtype)
+        # compute coefficients safely (no divide-by-zero warnings)
+        a0 = _safe_divide(xp, 1.0, d0, dtype=self.dtype)
+        b0 = _safe_divide(xp, -2.0 * t0, d0, dtype=self.dtype)
+        c0 = _safe_divide(xp, t0 * t0, d0, dtype=self.dtype)
 
-            # assemble monos in increasing order [a0_const, a1_x, a2_x2]
-            mono0 = xp.stack([c0, b0, a0], axis=-1)  # shape (n,3)
-            ctrl0 = self._mono_to_bern_quadratic_vec(mono0, t0, t1)  # (n,3)
-            inds0 = idx[mask0]
+        # assemble monos and bernstein controls for all bases (n is small)
+        mono0 = xp.stack([c0, b0, a0], axis=-1)              # shape (n,3)
+        ctrl0 = self._mono_to_bern_quadratic_vec(mono0, t0, t1)  # shape (n,3)
 
-            Q[inds0] += ctrl0[mask0] * w[mask0, None]
+        # find active basis indices on device and scatter-add into Q
+        sel0 = xp.nonzero(d0 > 0)[0]
+        if sel0.size:
+            sel_i = idx[sel0]   # basis indices
+            sel_s = sel_i       # global span indices (i + 0)
+            xp.add.at(Q, sel_s, ctrl0[sel0] * w[sel0, None])
 
         # --- span i+1 (local offset 1) ---
         d1 = (t2 - t0) * (t2 - t1)
         d2 = (t3 - t1) * (t2 - t1)
-        mask1 = (d1 > 0) & (d2 > 0)
 
-        if mask1.any():
-            term1 = _safe_divide(xp, 1.0, d1, dtype=self.dtype)
-            term2 = _safe_divide(xp, 1.0, d2, dtype=self.dtype)
+        # compute coefficients safely (no divide-by-zero warnings)
+        term1 = _safe_divide(xp, 1.0, d1, dtype=self.dtype)
+        term2 = _safe_divide(xp, 1.0, d2, dtype=self.dtype)
 
-            a1 = - (term1 + term2)
-            b1 = _safe_divide(xp, (t0 + t2), d1, dtype=self.dtype) + _safe_divide(xp, (t1 + t3), d2, dtype=self.dtype)
-            c1 = - (_safe_divide(xp, t0 * t2, d1, dtype=self.dtype) + _safe_divide(xp, t1 * t3, d2, dtype=self.dtype))
+        a1 = - (term1 + term2)
+        b1 = _safe_divide(xp, (t0 + t2), d1, dtype=self.dtype) + _safe_divide(xp, (t1 + t3), d2, dtype=self.dtype)
+        c1 = - (_safe_divide(xp, t0 * t2, d1, dtype=self.dtype) + _safe_divide(xp, t1 * t3, d2, dtype=self.dtype))
 
-            mono1 = xp.stack([c1, b1, a1], axis=-1)
-            ctrl1 = self._mono_to_bern_quadratic_vec(mono1, t1, t2)
-            inds1 = (idx + 1)[mask1]
+        # assemble monos and bernstein controls for all bases
+        mono1 = xp.stack([c1, b1, a1], axis=-1)          # shape (n,3)
+        ctrl1 = self._mono_to_bern_quadratic_vec(mono1, t1, t2)  # shape (n,3)
 
-            Q[inds1] += ctrl1[mask1] * w[mask1, None]
+        # find active indices and scatter-add into Q at span = i + 1
+        sel1 = xp.nonzero((d1 > 0) & (d2 > 0))[0]
+        if sel1.size:
+            sel_i = idx[sel1]        # basis indices
+            sel_s = sel_i + 1        # global span indices (i + 1)
+            xp.add.at(Q, sel_s, ctrl1[sel1] * w[sel1, None])
 
         # --- span i+2 (local offset 2) ---
         d3 = (t3 - t1) * (t3 - t2)
-        mask2 = d3 > 0
 
-        if mask2.any():
-            a2 = _safe_divide(xp, 1.0, d3, dtype=self.dtype)
-            b2 = _safe_divide(xp, -2.0 * t3, d3, dtype=self.dtype)
-            c2 = _safe_divide(xp, t3 * t3, d3, dtype=self.dtype)
+        # compute coefficients safely (no divide-by-zero warnings)
+        a2 = _safe_divide(xp, 1.0, d3, dtype=self.dtype)
+        b2 = _safe_divide(xp, -2.0 * t3, d3, dtype=self.dtype)
+        c2 = _safe_divide(xp, t3 * t3, d3, dtype=self.dtype)
 
-            mono2 = xp.stack([c2, b2, a2], axis=-1)
-            ctrl2 = self._mono_to_bern_quadratic_vec(mono2, t2, t3)
-            inds2 = (idx + 2)[mask2]
+        # assemble monos and bernstein controls for all bases
+        mono2 = xp.stack([c2, b2, a2], axis=-1)               # shape (n,3)
+        ctrl2 = self._mono_to_bern_quadratic_vec(mono2, t2, t3)  # shape (n,3)
 
-            Q[inds2] += ctrl2[mask2] * w[mask2, None]
+        # find active indices and scatter-add into Q at span = i + 2
+        sel2 = xp.nonzero(d3 > 0)[0]
+        if sel2.size:
+            sel_i = idx[sel2]         # basis indices
+            sel_s = sel_i + 2         # global span indices (i + 2)
+            xp.add.at(Q, sel_s, ctrl2[sel2] * w[sel2, None])
 
         self.Q = Q
         h = xp.diff(t)
@@ -1926,7 +1960,7 @@ class QuadraticSpline:
         self.xmax = kwargs['mmax']
         xp = self.xp
 
-        # assemble weights (interior coefficients only)
+        # Assemble weights (interior coefficients only)
         w = xp.zeros(self.n_basis, dtype=self.dtype)
         for i in range(1, self.n_basis - 1):
             w[i] = kwargs[f'c{i}']
@@ -1953,7 +1987,7 @@ class QuadraticSpline:
             raise IndexError("Invalid basis index")
         x = xp.asarray(x, dtype=self.dtype)
 
-        # temporarily set weights to select basis i
+        # Temporarily set weights to select basis i
         w_saved = self.weights
         Q_saved = self.Q
 
@@ -1964,7 +1998,7 @@ class QuadraticSpline:
             self._build_bernstein_representation()
             Q_i = self.Q.copy()
         finally:
-            # restore weights and Q without rebuilding full Q
+            # Restore weights and Q without rebuilding full Q
             self.weights = w_saved
             self.Q = Q_saved
 
@@ -1978,7 +2012,7 @@ class QuadraticSpline:
         u[mask] = (x[mask] - t0s[mask]) / h[mask]
 
         B = self._bernstein_quadratic(u)
-        return xp.sum(B * Q_i[spans], axis=1)
+        return xp.sum(B * Q_i[spans], axis=-1)
 
     def evaluate(self, x):
         xp = self.xp
@@ -1994,10 +2028,15 @@ class QuadraticSpline:
         u[mask] = (x[mask] - t0[mask]) / h[mask]
 
         B = self._bernstein_quadratic(u)
-        return xp.sum(B * self.Q[spans], axis=1)
+        return xp.sum(B * self.Q[spans], axis=-1)
 
     def pdf(self, x):
         return self.evaluate(x) / self.norm
+
+    def log_pdf(self, x):
+        xp = self.xp
+        p = self.pdf(x)
+        return _safe_log(xp, p)
 
 
 class CubicSpline:
@@ -2020,14 +2059,13 @@ class CubicSpline:
 
         self.xmin = None
         self.xmax = None
-        self.weights = None   # shape (n_basis,)
-        self.knots = None     # shape (n_knots,)
-        self.Q = None         # (n_spans, 4)
+        self.weights = None # Shape (n_basis,)
+        self.knots = None # Shape (n_knots,)
+        self.Q = None # Shape (n_spans, 4)
         self.norm = None
 
-        # backend (numpy or cupy) and dtype (float32 on GPU by default)
-        self.xp = get_module_array([self.n_basis])
-        self.xp, self.dtype = _detect_xp_and_dtype(self.xp)
+        # Backend (numpy or cupy) and dtype (float32 on GPU by default)
+        self.xp, self.dtype = _set_xp_and_dtype()
 
     def _make_knots(self):
         k = self.degree
@@ -2083,7 +2121,7 @@ class CubicSpline:
         Q = xp.zeros((n_spans, 4), dtype=self.dtype)
         idx = xp.arange(n, dtype=int)
 
-        # gather per-basis knots vectors (length n)
+        # Gather per-basis knots vectors (length n)
         k0 = t.take(idx)
         k1 = t.take(idx + 1)
         k2 = t.take(idx + 2)
@@ -2128,11 +2166,11 @@ class CubicSpline:
         bp2 = _safe_divide(xp, -2.0 * k4, d3p, dtype=self.dtype)
         cp2 = _safe_divide(xp, k4 * k4, d3p, dtype=self.dtype)
 
-        # denominators in Cox-de Boor cubic recurrence
+        # Denominators in Cox-de Boor cubic recurrence
         L = k3 - k0
         R = k4 - k1
 
-        # compute per-basis cubic coefficients for each local span (i..i+3) using safe divides
+        # Compute per-basis cubic coefficients for each local span (i..i+3) using safe divides
         s0_A3 = _safe_divide(xp, aq0, L, dtype=self.dtype)
         s0_A2 = _safe_divide(xp, (bq0 - aq0 * k0), L, dtype=self.dtype)
         s0_A1 = _safe_divide(xp, (cq0 - bq0 * k0), L, dtype=self.dtype)
@@ -2184,26 +2222,26 @@ class CubicSpline:
             (s3_A0, s3_A1, s3_A2, s3_A3),
         ]):
             s_indices = idx + local_j
-            # mask valid spans
+            # Mask valid spans
             valid_mask = (s_indices >= 0) & (s_indices < n_spans)
 
             if not xp.any(valid_mask):
                 continue
 
-            # select masked entries
+            # Select masked entries
             sel = valid_mask
-            sel_i = idx[sel]             # basis indices selected
-            sel_s = s_indices[sel]       # corresponding span indices
+            sel_i = idx[sel] # Basis indices selected
+            sel_s = s_indices[sel] # Corresponding span indices
 
-            # prepare monomial array for these selected basis-span pairs, shape (m,4)
+            # Prepare monomial array for these selected basis-span pairs, shape (m,4)
             mono_sel = xp.stack([A0_arr[sel], A1_arr[sel], A2_arr[sel], A3_arr[sel]], axis=-1)
-            # get span endpoints for these selected spans
+            # Get span endpoints for these selected spans
             t0_sel = t.take(sel_s)
             t1_sel = t.take(sel_s + 1)
-            # compute Bernstein control points for all selected entries
-            ctrl = self._mono_to_bern_cubic_vec(mono_sel, t0_sel, t1_sel)  # (m,4)
+            # Compute Bernstein control points for all selected entries
+            ctrl = self._mono_to_bern_cubic_vec(mono_sel, t0_sel, t1_sel) # (m,4)
 
-            # accumulate weighted contributions into Q at rows sel_s
+            # Accumulate weighted contributions into Q at rows sel_s
             Q[sel_s] += (w[sel_i, None] * ctrl)
 
         self.Q = Q
@@ -2221,7 +2259,7 @@ class CubicSpline:
         self.xmax = kwargs['mmax']
         xp = self.xp
 
-        # assemble weights (interior coefficients only)
+        # Assemble weights (interior coefficients only)
         w = xp.zeros(self.n_basis, dtype=self.dtype)
         for i in range(1, self.n_basis - 1):
             w[i] = kwargs[f'c{i}']
@@ -2246,7 +2284,7 @@ class CubicSpline:
             raise IndexError("Invalid basis index")
         x = xp.asarray(x, dtype=self.dtype)
 
-        # temporarily set weights to select basis i
+        # Temporarily set weights to select basis i
         w_saved = self.weights
         Q_saved = self.Q
 
@@ -2257,7 +2295,7 @@ class CubicSpline:
             self._build_bernstein_representation()
             Q_i = self.Q.copy()
         finally:
-            # restore weights and Q without rebuilding full Q
+            # Restore weights and Q without rebuilding full Q
             self.weights = w_saved
             self.Q = Q_saved
 
@@ -2271,7 +2309,7 @@ class CubicSpline:
         u[mask] = (x[mask] - t0s[mask]) / h[mask]
 
         B = self._bernstein_cubic(u)
-        return xp.sum(B * Q_i[spans], axis=1)
+        return xp.sum(B * Q_i[spans], axis=-1)
 
     def evaluate(self, x):
         xp = self.xp
@@ -2287,7 +2325,12 @@ class CubicSpline:
         u[mask] = (x[mask] - t0[mask]) / h[mask]
         
         B = self._bernstein_cubic(u)
-        return xp.sum(B * self.Q[spans], axis=1)
+        return xp.sum(B * self.Q[spans], axis=-1)
 
     def pdf(self, x):
         return self.evaluate(x) / self.norm
+
+    def log_pdf(self, x):
+        xp = self.xp
+        p = self.pdf(x)
+        return _safe_log(xp, p)
