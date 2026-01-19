@@ -1,6 +1,7 @@
 from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn
 from .conversions import radec2indeces
 from .utils import check_posterior_samples_and_prior
+import copy as cp
 
 # LVK Reviewed
 class posterior_samples_catalog(object):
@@ -239,3 +240,47 @@ class posterior_samples(object):
         prob/=prob.sum()
         idx = xp.random.choice(len(self.posterior_data['prior']),replace=replace,p=prob)
         return {key:self.posterior_data[key][idx] for key in list(self.posterior_data.keys())}
+    
+    def filter_for_probability(self,probability_class,Nsamples,overwrite=False,replace=True):
+        '''
+        Filters the posterior samples with a given probability class
+        Parameters
+        ----------
+        probability_class: class
+            Probability class from the probability module
+        Nsamples: int
+            How many samples to draw
+        overwrite: bool
+            If True it will overwrite the current posterior samples with the filtered ones
+        replace: bool
+            Replace the injections with a copy once drawn
+
+        Returns
+        -------
+        If overwrite is False it returns a dictionary containing the filtered PE
+        '''
+        pdet = probability_class(**{key:self.posterior_data[key] for key in probability_class.event_parameters})
+        xp = get_module_array(pdet)
+        pdet/=pdet.sum()
+        idx = xp.random.choice(len(self.posterior_data['prior']),replace=replace,p=pdet,size=Nsamples)
+        self.nsamples = Nsamples
+        if overwrite:
+            self.posterior_data_not_filtered = cp.deepcopy(self.posterior_data)
+            self.posterior_data = {key:self.posterior_data[key][idx] for key in list(self.posterior_data.keys())}
+        else:  
+            return {key:self.posterior_data[key][idx] for key in list(self.posterior_data.keys())}
+        
+    def fit_gaussian_kde(self,event_parameters,bw_method='scott'):
+        '''
+        Fit a gaussian kde to the posterior samples
+        
+        Parameters
+        ----------
+        event_parameters: dict
+            Dictionary containing the event parameters
+        bw_method: str or float
+            Bandwidth method to pass to scipy gaussian_kde
+        '''
+        data = np.array([self.posterior_data[key] for key in event_parameters])
+        self.kde = sn.stats.gaussian_kde(data,bw_method=bw_method)
+        self.kde_parameters = event_parameters

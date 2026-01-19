@@ -6,6 +6,112 @@ import bilby
 import icarogw
 from .wrappers import FlatLambdaCDM_wrap
 
+class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
+    def __init__(self, posterior_samples_dict_bright, posterior_samples_dict_dark,
+                 injections, 
+                 rate_model, 
+                 nparallel=None, neffPE=20,neffINJ=None,likelihood_variance_thr=None):        
+
+        # Saves injections in a cupyfied format
+        self.injections=injections
+        self.neffPE=neffPE
+
+        # Rate models for bright and dark sirens
+        self.rate_model=rate_model
+
+        # Posterior samples for bright and dark sirens
+        self.posterior_samples_dict_bright=posterior_samples_dict_bright
+        self.posterior_samples_dict_dark=posterior_samples_dict_dark
+        
+        self.posterior_samples_dict_bright.build_parallel_posterior(nparallel=nparallel)
+        self.posterior_samples_dict_dark.build_parallel_posterior(nparallel=nparallel)
+
+        self.likelihood_variance_thr = likelihood_variance_thr
+
+        if likelihood_variance_thr is not None:
+            print('Using Likelihood variance as numerical stability estimator \n We will not consider neffPE or neffINJ')
+            self.neffPE = -1.
+            self.neffINJ = -1.
+        else:    
+            print('Using neffPE and neffINJ as numerical stability estimators')
+            if neffINJ is None:
+                print('Setting neffINJ as 4 times observed signals')
+                self.neffINJ=4*(self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev) 
+            else:
+                self.neffINJ=neffINJ
+        
+        super().__init__(parameters={ll: None for ll in self.rate_model.population_parameters})
+                
+    def log_likelihood(self):
+        '''
+        Evaluates and return the log-likelihood
+        '''          
+
+        self.rate_model.update(**{key:self.parameters[key] for key in self.rate_model.population_parameters})
+        self.injections.update_weights(self.rate_model)
+        Neff=self.injections.effective_injections_number()
+        # If the injections are not enough return 0, you cannot go to that point. This is done because the number of injections that you have
+        # are not enough to calculate the selection effect
+        
+        xp = get_module_array(self.injections.log_weights)
+        
+        if (Neff<self.neffINJ) | (Neff==0.):
+            return -xp.inf
+        
+        # Update the weights on the PE for BRIGHT sirens
+        self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_bright # Needed to identify the relavant PEs parameters
+        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_bright 
+        self.posterior_samples_dict_bright.update_weights(self.rate_model)
+        neff_PE_ev_bright = self.posterior_samples_dict_bright.get_effective_number_of_PE()
+
+        # Update the weights on the PE for DARK sirens
+        self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_dark # Needed to identify the relavant PEs parameters
+        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_dark 
+        self.posterior_samples_dict_dark.update_weights(self.rate_model)
+        neff_PE_ev_dark = self.posterior_samples_dict_dark.get_effective_number_of_PE()
+
+        neff_PE_ev_total = xp.hstack([neff_PE_ev_bright,neff_PE_ev_dark])
+
+        if xp.any(neff_PE_ev_total<self.neffPE):
+            return -xp.inf
+        
+        nev_total = self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev
+        Ns_array = xp.hstack([self.posterior_samples_dict_bright.Ns_array,self.posterior_samples_dict_dark.Ns_array])
+
+        self.likelihood_variance = (xp.power(nev_total,2.)/Neff)*(1-Neff/self.injections.ntotal)+xp.sum(
+            xp.power(neff_PE_ev_total,-1.)*(1-neff_PE_ev_total/Ns_array)
+        )
+
+        if self.likelihood_variance_thr is not None:
+            if self.likelihood_variance > self.likelihood_variance_thr:
+                return -xp.inf
+        
+        # Combine all the terms  
+        if self.rate_model.scale_free:
+            # Log likelihood for scale free model, Eq. 1.3 on the document
+            log_likeli = xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights))-self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.pseudo_rate) + \
+            xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))-self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.pseudo_rate)
+        else:
+            Nexp=self.injections.expected_number_detections()
+            # Log likelihood for  the model, Eq. 1.1 on the document
+            log_likeli = -Nexp + \
+                self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights)) + \
+                self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))      
+        
+        # Controls on the value of the log-likelihood. If the log-likelihood is -inf, then set it to the smallest
+        # python valye 1e-309
+        if log_likeli == xp.inf:
+            raise ValueError('LOG-likelihood must be smaller than infinite')
+
+        if xp.isnan(log_likeli):
+            log_likeli = -xp.inf
+        else:
+            log_likeli = log_likeli
+            
+        return cp2np(log_likeli)
+
+
+
 # LVK Reviewed
 class hierarchical_likelihood(bilby.Likelihood):
     def __init__(self, posterior_samples_dict, injections, rate_model, nparallel=None, neffPE=20,neffINJ=None,likelihood_variance_thr=None):

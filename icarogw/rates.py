@@ -2,6 +2,282 @@ from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, is
 from .conversions import detector2source_jacobian, detector2source, detector2source_jacobian_q, detector2source_jacobian_single_mass
 from scipy.stats import gaussian_kde
 from .wrappers import modgravity_wrappers, lcdm_wrappers
+import bright_sirens_tools as bst
+
+class CBC_rate_bright_and_dark_sirens_redshiftless(object):
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,
+                 pmiss_GRB_and_KN, EoS, scale_free=False):
+        
+        self.cw = cosmology_wrapper
+        self.mw = mass_wrapper
+        self.rw = rate_wrapper
+        self.pmiss_GRB_and_KN = pmiss_GRB_and_KN
+        self.EoS = EoS
+        self.scale_free = scale_free
+        
+        if scale_free:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters
+        else:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters + ['R0']
+            
+        self.PEs_parameters_dark = set(['mass_1', 'mass_2', 'luminosity_distance'] + self.pmiss_GRB_and_KN.event_parameters)
+        self.PEs_parameters_bright = ['mass_1', 'mass_2', 'luminosity_distance']
+        self.injections_parameters = ['mass_1', 'mass_2', 'luminosity_distance']
+            
+    def update(self,**kwargs):
+        '''
+        This method updates the population models encoded in the wrapper. 
+        
+        Parameters
+        ----------
+        kwargs: flags
+            The kwargs passed should be the population parameters given in self.population_parameters
+        '''
+        self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
+        self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
+        self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
+                    
+        if not self.scale_free:
+            self.R0 = kwargs['R0']
+        
+    def log_rate_PE_dark(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the posterior samples.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology) 
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
+        # Spin 0.4 is hardcoded according to the simulation we are currently doing
+        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
+        # First term is the probability of not emitting, second term the probability of emitting times the probability of losing
+        addon = xp.logical_not(has_EM_emission) + has_EM_emission*self.pmiss_GRB_and_KN(**kwargs) 
+
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z) \
+        + xp.log(addon) # Added EM modelling
+        
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+    
+    def log_rate_PE_bright(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the posterior samples. Samples must be reweighted for pdet
+\        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology) 
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
+        # Spin 0.4 is hardcoded according to the simulation we are currently doing
+        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
+        # First term is the probability of not emitting, second term the probability of emitting times the probability of losing
+        addon = has_EM_emission 
+
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z) \
+        + xp.log(addon) # Added EM modelling
+        
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+
+    def log_rate_injections(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the injections.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology) 
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z)
+        
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+
+
+class CBC_rate_bright_and_dark_sirens(object):
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,
+                 pmiss_GRB_and_KN, EoS, scale_free=False):
+        
+        self.cw = cosmology_wrapper
+        self.mw = mass_wrapper
+        self.rw = rate_wrapper
+        self.pmiss_GRB_and_KN = pmiss_GRB_and_KN
+        self.EoS = EoS
+        self.scale_free = scale_free
+        
+        if scale_free:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters
+        else:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters + ['R0']
+            
+        self.PEs_parameters_dark = set(['mass_1', 'mass_2', 'luminosity_distance'] + self.pmiss_GRB_and_KN.event_parameters)
+        self.PEs_parameters_bright = ['mass_1', 'mass_2', 'luminosity_distance','z_EM']
+        self.injections_parameters = ['mass_1', 'mass_2', 'luminosity_distance']
+            
+    def update(self,**kwargs):
+        '''
+        This method updates the population models encoded in the wrapper. 
+        
+        Parameters
+        ----------
+        kwargs: flags
+            The kwargs passed should be the population parameters given in self.population_parameters
+        '''
+        self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
+        self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
+        self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
+                    
+        if not self.scale_free:
+            self.R0 = kwargs['R0']
+        
+    def log_rate_PE_dark(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the posterior samples.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology) 
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
+        # Spin 0.4 is hardcoded according to the simulation we are currently doing
+        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
+        # First term is the probability of not emitting, second term the probability of emitting times the probability of losing
+        addon = xp.logical_not(has_EM_emission) + has_EM_emission*self.pmiss_GRB_and_KN(**kwargs) 
+
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z) \
+        + xp.log(addon) # Added EM modelling
+        
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+    
+    def log_rate_PE_bright(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the posterior samples.
+        NOTE: THE PROVIDED PEs must be matrices with N_ev X N_pos
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        z = kwargs['z_EM']
+        ms1, ms2 = kwargs['mass_1']/(1+z), kwargs['mass_2']/(1+z) # Source mass
+                        
+        # Fit the KDEs for the events luminosity distances if they do not exist
+        # Fitting KDE is valid only if the GW likelihood can be factorized in dl and mass terms.
+        if not hasattr(self, 'kde_dl_fits'):
+            print('Fitting KDEs for {:d} signals'.format(kwargs['luminosity_distance'].shape[0]))
+            self.kde_dl_fits = []
+            for i in range(kwargs['luminosity_distance'].shape[0]):
+                self.kde_dl_fits.append(gaussian_kde(kwargs['luminosity_distance'][i]))
+
+        log_GW_dl_posterior = []
+        for i in range(kwargs['luminosity_distance'].shape[0]):
+            weig_ap = self.kde_dl_fits[i].logpdf(self.cw.cosmology.z2dl(kwargs['z_EM'][i,:]))
+            log_GW_dl_posterior.append(weig_ap)
+        # Matrix of distance likelihood evaulations for N_bright x N_PEs
+        log_GW_dl_posterior = xp.stack(log_GW_dl_posterior)
+
+        # Spin 0.4 is hardcoded according to the simulation we are currently doing
+        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
+
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document. The 3*xp.log1p(z) includes jacobian from masses
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-3*xp.log1p(z) \
+        + xp.log(has_EM_emission) + log_GW_dl_posterior - 2*xp.log(self.cw.cosmology.z2dl(kwargs['z_EM'])) # Added EM modelling, last term removes d2 prior on PEs
+                    
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+
+    def log_rate_injections(self,prior,**kwargs):
+        '''
+        This method calculates the weights (CBC merger rate per year at detector) for the injections.
+        
+        Parameters
+        ----------
+        prior: array
+            Prior written in terms of the variables identified by self.event_parameters
+        kwargs: flags
+            The kwargs are identified by self.event_parameters. Note that if the prior is scale-free, the overall normalization will not be included.
+        '''
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology) 
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
+        # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
+        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z)
+        
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+    
+
 
 class CBC_rate_mchirp_q(object):
     '''
