@@ -1800,10 +1800,19 @@ def _safe_log(xp, p):
 
 class QuadraticSpline:
     """
-    Vectorized quadratic B-spline model (degree 2), GPU-friendly.
+    Fully analytic quadratic B-spline model (degree 2) of pdf using closed-form expressions from the
+    Cox-De Boor algorithm. Each basis element in each span is converted into a Bernstein polynomial,
+    allowing for fast evaluation and analytic integral for normalisation.
+
+    The implementation is vectorised and GPU-compatible.
 
     Monomial coefficient ordering: [a0, a1, a2] with
       P(x) = a0 + a1 * x + a2 * x^2
+
+    Behaviour:
+    - Interior coefficients are normalised to one. They follow a Dirichlet distribution if
+      independently drawn from a Gamma prior (i.e. uniform weights on the simplex).
+    - First and last coefficients remain fixed to zero.
     """
 
     def __init__(self, n_basis: int = 6, spacing: str = "uniform"):
@@ -2041,10 +2050,19 @@ class QuadraticSpline:
 
 class CubicSpline:
     """
-    Vectorized cubic B-spline model (degree 3), GPU-friendly.
+    Fully analytic cubic B-spline model (degree 3) of pdf using closed-form expressions from the
+    Cox-De Boor algorithm. Each basis element in each span is converted into a Bernstein polynomial,
+    allowing for fast evaluation and analytic integral for normalisation.
+
+    The implementation is vectorised and GPU-compatible.
 
     Monomial coefficient ordering: [a0, a1, a2, a3] with
       P(x) = a0 + a1 * x + a2 * x^2 + a3 * x^3
+
+    Behaviour:
+    - Interior coefficients are normalised to one. They follow a Dirichlet distribution if
+      independently drawn from a Gamma prior (i.e. uniform weights on the simplex).
+    - First and last coefficients remain fixed to zero.
     """
 
     def __init__(self, n_basis: int = 6, spacing: str = "uniform"):
@@ -2334,3 +2352,298 @@ class CubicSpline:
         xp = self.xp
         p = self.pdf(x)
         return _safe_log(xp, p)
+
+
+class LogSplineCoxDeBoor:
+    """
+    B-spline model of log(pdf) for arbitrary degree using the Cox-De Boor algorithm.
+    The spline is defined by n_basis basis functions of given degree over [mmin, mmax],
+    with either uniform or logarithmic knot spacing. Each basis has an associated coefficient
+    that defines the log(pdf) as a linear combination of the basis functions.
+
+    The normalization is computed numerically by evaluating the spline on a grid.
+    The implementation is vectorised and GPU-compatible.
+
+    Behaviour:
+    - Interior coefficients are used exactly as provided (no mean subtraction).
+    - First and last coefficients remain fixed to zero. This fixes the gauge invariance from adding
+      a global constant to all coefficients.
+    - Coefficients can be negative as the log(pdf), but still ensuring that the pdf is always positive.
+    """
+
+    def __init__(self, n_basis: int = 6, degree: int = 2, spacing: str = "uniform"):
+        """
+        n_basis: number of interior (free) coefficients. The full basis count = n_basis + 2.
+        degree: polynomial degree of the spline (typically 1..4).
+        spacing: "uniform" or "log" for knot spacing on [mmin, mmax]
+        """
+        self.n_basis_user = int(n_basis)
+        if self.n_basis_user < 1:
+            raise ValueError("n_basis must be >= 1 (at least one interior basis).")
+        self.n_basis = self.n_basis_user + 2  # include first and last fixed bases
+        self.degree = int(degree)
+        if self.degree < 0:
+            raise ValueError("degree must be non-negative")
+        self.spacing = spacing
+        if spacing not in ("uniform", "log"):
+            raise ValueError("spacing must be 'uniform' or 'log'")
+
+        # population parameters: mmin, mmax, c1..cN (interior coefficients)
+        self.population_parameters = (['mmin', 'mmax'] +
+                                      [f'c{i}' for i in range(1, self.n_basis_user + 1)])
+
+        # placeholders
+        self.xmin = None
+        self.xmax = None
+        self.knots = None  # knot vector
+        self.weights = None  # full weights array length n_basis (first/last fixed)
+        self.norm = None  # log-normalization constant (log integral)
+        self._grid_size = 1000  # number of points for numerical normalization
+
+        # xp and dtype
+        self.xp, self.dtype = _set_xp_and_dtype()
+
+    # -----------------
+    # Knot construction
+    # -----------------
+    def _make_knots(self):
+        xp = self.xp
+        k = self.degree
+        n = self.n_basis
+
+        # number of interior knots (excluding clamped repeats)
+        # For n basis functions and degree k, knot vector length = n + k + 1
+        # The number of unique internal knots (excluding clamped endpoint repeats) is:
+        n_int = n - k - 1
+        if n_int < 0:
+            raise ValueError("n_basis (including the two fixed ends) must be >= degree + 1")
+
+        if self.spacing == "uniform":
+            # we want n_int+2 endpoints in the linspace (including x_min & x_max),
+            # then drop the endpoints to get interior unique positions
+            interior = xp.linspace(self.xmin, self.xmax, n_int + 2, dtype=self.dtype)
+        else:
+            if float(self.xmin) <= 0:
+                raise ValueError("log spacing requires mmin > 0")
+            interior = xp.exp(
+                xp.linspace(xp.log(self.xmin), xp.log(self.xmax), n_int + 2, dtype=self.dtype)
+            )
+
+        # remove endpoints (they will be added by clamping)
+        if interior.size > 2:
+            interior = interior[1:-1]
+        else:
+            interior = xp.asarray([], dtype=self.dtype)
+
+        # clamped ends: repeat endpoints k+1 times
+        t_start = xp.full(k + 1, self.xmin, dtype=self.dtype)
+        t_end = xp.full(k + 1, self.xmax, dtype=self.dtype)
+
+        knots = xp.concatenate([t_start, interior, t_end])
+        # final length should be n + k + 1
+        expected = n + k + 1
+        if knots.size != expected:
+            # If something went wrong, raise a helpful error
+            raise RuntimeError(f"Unexpected knot vector length {knots.size}, expected {expected}")
+        return knots
+
+    # ------------------------
+    # Cox-de Boor (vectorized)
+    # ------------------------
+    def basis(self, x):
+        """
+        Compute all B-spline basis functions at positions x.
+        Returns array shape (..., n_basis) matching x's leading dimensions.
+        """
+        xp = self.xp
+        dtype = self.dtype
+
+        scalar_input = False
+        x_arr = xp.asarray(x, dtype=dtype)
+        orig_shape = x_arr.shape
+        # flatten to 1D for evaluation
+        if x_arr.ndim == 0:
+            x_arr = x_arr[None]
+            scalar_input = True
+        else:
+            x_arr = x_arr.ravel()
+        N = x_arr.size
+
+        t = self.knots
+        if t is None:
+            raise RuntimeError("knots have not been constructed; call update(...) first.")
+        k = self.degree
+        n_basis = self.n_basis
+
+        # Degree 0 basis:
+        B = xp.zeros((N, n_basis), dtype=dtype)
+        t0 = t[:n_basis]
+        t1 = t[1:n_basis + 1]
+
+        # include left-closed intervals [t_i, t_{i+1}) except the last interval which is closed on right
+        mask = (x_arr[:, None] >= t0[None, :]) & (x_arr[:, None] < t1[None, :])
+        B[mask] = 1.0
+
+        # left boundary exact equality (x == t[0]) -> first basis = 1
+        left = (x_arr == t[0])
+        if xp.any(left):
+            B[left, 0] = 1.0
+
+        # right boundary exact equality (x == t[-1]) -> last basis = 1
+        right = (x_arr == t[-1])
+        if xp.any(right):
+            B[right, -1] = 1.0
+
+        # Recursion for d = 1..k
+        for d in range(1, k + 1):
+            # slices for denominators (length n_basis)
+            t_i = t[:n_basis]                   # t[i]
+            t_id = t[d:n_basis + d]             # t[i + d]
+            t_ip1 = t[1:n_basis + 1]            # t[i+1]
+            t_ip1d1 = t[d + 1:n_basis + d + 1]  # t[i + d + 1]
+
+            denom1 = t_id - t_i         # shape (n_basis,)
+            denom2 = t_ip1d1 - t_ip1    # shape (n_basis,)
+
+            # term1: (x - t_i) / (t_{i+d} - t_i) * B^{d-1}_i
+            numer1 = (x_arr[:, None] - t_i[None, :])
+            term1 = _safe_divide(xp, numer1, denom1[None, :], dtype) * B
+
+            # term2: (t_{i+d+1} - x) / (t_{i+d+1} - t_{i+1}) * B^{d-1}_{i+1}
+            term2 = xp.zeros_like(B)
+            if n_basis > 1:
+                numer2 = (t_ip1d1[None, :-1] - x_arr[:, None])  # aligns with i = 0..n_basis-2
+                denom2_slice = denom2[None, :-1]
+                # B[:, 1:] corresponds to B^{d-1}_{i+1}
+                term2[:, :-1] = _safe_divide(xp, numer2, denom2_slice, dtype) * B[:, 1:]
+
+            B = term1 + term2
+
+        # reshape back to original shape + n_basis
+        out_shape = orig_shape + (n_basis,)
+        B = B.reshape(out_shape)
+        if scalar_input:
+            return B[0]  # return shape (n_basis,)
+        return B  # shape (..., n_basis)
+
+    # ----------------------
+    # Update / Normalization
+    # ----------------------
+    def update(self, **kwargs):
+        """
+        Update spline parameters.
+
+        Required kwargs:
+        - mmin: left endpoint
+        - mmax: right endpoint
+        - c1..cN: interior coefficients (N == n_basis_user)
+
+        Interior coefficients are used exactly as provided (first and last coefficients remain 0).
+        After updating weights, the numeric normalization constant is computed.
+        """
+        xp = self.xp
+        dtype = self.dtype
+
+        if 'mmin' not in kwargs or 'mmax' not in kwargs:
+            raise ValueError("update requires 'mmin' and 'mmax'")
+
+        self.xmin = xp.asarray(kwargs['mmin'], dtype=dtype)
+        self.xmax = xp.asarray(kwargs['mmax'], dtype=dtype)
+        if float(self.xmax) <= float(self.xmin):
+            raise ValueError("mmax must be > mmin")
+
+        if self.spacing == "log" and float(self.xmin) <= 0:
+            raise ValueError("log spacing requires mmin > 0")
+
+        # Build knots
+        self.knots = self._make_knots()
+
+        # Assemble weights (first and last are fixed zero)
+        w = xp.zeros(self.n_basis, dtype=dtype)
+        # interior coefficients from kwargs: c1..cN
+        interior = xp.zeros(self.n_basis_user, dtype=dtype)
+        for i in range(1, self.n_basis_user + 1):
+            interior[i - 1] = xp.asarray(kwargs.get(f'c{i}', 0.0), dtype=dtype)
+
+        w[1:-1] = interior
+        self.weights = w
+
+        # Compute normalization constant
+        self._compute_norm()
+
+    def _compute_norm(self):
+        xp = self.xp
+        dtype = self.dtype
+
+        # Build integration grid
+        if self.spacing == "log":
+            grid = xp.exp(
+                xp.linspace(xp.log(self.xmin), xp.log(self.xmax), self._grid_size, dtype=dtype)
+            )
+        else:
+            grid = xp.linspace(self.xmin, self.xmax, self._grid_size, dtype=dtype)
+
+        B = self.basis(grid)  # shape (grid_size, n_basis)
+        # dot each row of B with weights -> logp at grid
+        logp = xp.dot(B, self.weights)
+
+        # stabilize with log-sum-exp style
+        m = float(xp.max(logp))
+        shifted = xp.exp(logp - m)
+        Z = float(xp.trapz(shifted, grid))
+        if Z <= 0 or (not xp.isfinite(Z)):
+            raise ValueError("Spline has zero or invalid integral during normalization.")
+
+        self.norm = m + xp.log(Z)
+
+    # ----------
+    # Evaluation
+    # ----------
+    def log_pdf(self, x):
+        """
+        Evaluate log(pdf) at x (scalar or array). Values outside [xmin, xmax] return -inf.
+        """
+        xp = self.xp
+        dtype = self.dtype
+
+        x_arr = xp.asarray(x, dtype=dtype)
+        scalar_input = False
+        if x_arr.ndim == 0:
+            x_arr = x_arr[None]
+            scalar_input = True
+
+        out = xp.full(x_arr.shape, -xp.inf, dtype=dtype)
+        # mask in domain (closed interval)
+        mask = (x_arr >= self.xmin) & (x_arr <= self.xmax)
+        if not xp.any(mask):
+            return out[0] if scalar_input else out
+
+        B = self.basis(x_arr[mask])  # shape (M, n_basis)
+        vals = xp.dot(B, self.weights) - self.norm
+        out[mask] = vals
+
+        return out[0] if scalar_input else out
+    
+    def pdf(self, x):
+        xp = self.xp
+        lp = self.log_pdf(x)
+        return xp.exp(lp)
+
+    # ---------
+    # Utilities
+    # ---------
+    def get_weights(self):
+        if self.weights is None:
+            return None
+        try:
+            return self.weights.get()
+        except Exception:
+            return self.weights
+
+    def get_knots(self):
+        if self.knots is None:
+            return None
+        try:
+            return self.knots.get()
+        except Exception:
+            return self.knots
