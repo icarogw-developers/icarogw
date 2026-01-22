@@ -63,36 +63,68 @@ def create_pixelated_catalogs(outfolder,nside,groups_dict,fields_to_take=None,ba
         np.savetxt(os.path.join(outfolder,'checkpoint_creation.txt'),np.array([istart]),fmt='%d')           
     else:
         istart = np.genfromtxt(os.path.join(outfolder,'checkpoint_creation.txt')).astype(int)
+
+    # Load corrupted pixels
+    corrupted_log = os.path.join(outfolder, 'corrupted_pixels.txt')
+    corrupted_pixels = set()
+    if os.path.isfile(corrupted_log):
+        with open(corrupted_log, 'r') as f:
+            for line in f:
+                try:
+                    corrupted_pixels.add(int(line.split(':')[0].strip()))
+                except:
+                    pass
     
-    Ntotal = len(groups_dict['ra'])  
+    Ntotal = len(groups_dict[fields_to_take[0]])  
     pbar = tqdm(total=Ntotal-istart)
 
     while istart < Ntotal:
-        idx = radec2indeces(groups_dict['ra'][istart:istart+batch],groups_dict['dec'][istart:istart+batch],nside,nest=nest)
+        idx = radec2indeces(groups_dict['ra'][istart:istart+batch],
+                            groups_dict['dec'][istart:istart+batch],
+                            nside, nest=nest)
         u, indices = np.unique(idx, return_inverse=True) # u array of unique indices
+
         for ipix, pixel in enumerate(u):
-            with h5py.File(os.path.join(outfolder,'pixel_{:d}.hdf5'.format(pixel)),'r+') as pp:
+            # Skip corrupted pixels
+            if pixel in corrupted_pixels:
+                continue
+
+            with h5py.File(os.path.join(outfolder,'pixel_{:d}.hdf5'.format(pixel)), 'r+') as pp:
                 pix = pp['catalog']
                 galaxies_id = np.where(indices==ipix)[0] # They are all the galaxies staying in this pixel
 
-                # If the fields to take is equal to the list of keys of the galaxy catalog
-                # It means you are writing the file for the first time, so you cound galaxies
-                # Note that Ntotal_galaxies_original contains all the galaxies even with ones with NaNs
-                if fields_to_take == list_of_keys:
-                    pp.attrs['Ntotal_galaxies_original']+=len(galaxies_id)
+                try:
+                    # If the fields to take is equal to the list of keys of the galaxy catalog
+                    # It means you are writing the file for the first time, so you cound galaxies
+                    # Note that Ntotal_galaxies_original contains all the galaxies even with ones with NaNs
+                    if fields_to_take == list_of_keys:
+                        pp.attrs['Ntotal_galaxies_original'] += len(galaxies_id)
                     
-                # The loop is only on the fields to take as you might want to add fields when the file is created
-                for key in fields_to_take:
-                    pix[key].resize((pix[key].shape[0] + len(galaxies_id)), axis = 0)
-                    pix[key][-len(galaxies_id):] = groups_dict[key][istart:istart+batch][galaxies_id]
-        istart+=batch
+                    # The loop is only on the fields to take as you might want to add fields when the file is created
+                    for key in fields_to_take:
+                        pix[key].resize((pix[key].shape[0] + len(galaxies_id)), axis = 0)
+                        pix[key][-len(galaxies_id):] = groups_dict[key][istart:istart+batch][galaxies_id]
+
+                except OSError as e:
+                    # Mark this pixel as corrupted, log it once, and never touch it again
+                    if pixel not in corrupted_pixels:
+                        corrupted_pixels.add(pixel)
+                        with open(corrupted_log, 'a') as flog:
+                            flog.write(f"{pixel} : {str(e)}\n")
+                    print(f"Skipping corrupted pixel {pixel} due to error: {e}")
+                    continue  # go to next pixel
+
+        istart += batch
         pbar.update(batch)
-        np.savetxt(os.path.join(outfolder,'checkpoint_creation.txt'),np.array([istart]),fmt='%d')
+        np.savetxt(os.path.join(outfolder,'checkpoint_creation.txt'),
+                   np.array([istart]), fmt='%d')
+
     pbar.close()
 
     # Reset the checkpoint creation as we might want to add more fields later
     istart = 0
-    np.savetxt(os.path.join(outfolder,'checkpoint_creation.txt'),np.array([istart]),fmt='%d')    
+    np.savetxt(os.path.join(outfolder,'checkpoint_creation.txt'),np.array([istart]),fmt='%d')
+
 
 #LVK reviewed
 def clear_empty_pixelated_files(outfolder,nside):
