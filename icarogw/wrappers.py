@@ -2373,13 +2373,21 @@ class massprior_3PL(pm_prob):
             mix_a     = kwargs['mix_alpha'], 
             mix_b     = kwargs['mix_beta'], 
             smooth    = self.flag_powerlaw_smoothing, 
-            delta_m_a = kwargs.get('delta_m', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_b = kwargs.get('delta_m_b', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_c = kwargs.get('delta_m_c', 1.0), #if smoothing parameters are not given, inputs a default value
+            delta_m_a = kwargs.get('delta_m', 1.0), # if no smoothing, default 1. value
+            delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
+            delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
         )
 
 
 class massprior_3PL_global_mmax(pm_prob):
+    """
+    3 Power-Laws model with a global mmax parameter shared by all PL components.
+    Optional smoothing of low end of PL components.
+
+    Note that PL components are parametrised as follows:
+    $PL(m) \propto m^{- \alpha}$. 
+    Consequently, the model is mostly relevant for positive alpha parameters.
+    """
 
     def __init__(self, flag_powerlaw_smoothing=False):
         self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
@@ -2413,13 +2421,78 @@ class massprior_3PL_global_mmax(pm_prob):
             mix_a     = kwargs['mix_alpha'], 
             mix_b     = kwargs['mix_beta'], 
             smooth    = self.flag_powerlaw_smoothing, 
-            delta_m_a = kwargs.get('delta_m', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_b = kwargs.get('delta_m_b', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_c = kwargs.get('delta_m_c', 1.0), #if smoothing parameters are not given, inputs a default value
+            delta_m_a = kwargs.get('delta_m', 1.0), # if no smoothing, default 1. value
+            delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
+            delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
+        )
+
+
+class massprior_3PL_global_mmax_dummy_mmin(pm_prob):
+    """
+    3 Power-Laws model with a global mmax parameter shared by all PL components.
+    Optional smoothing of low end of PL components.
+    
+    Dummy 'mmin' and 'delta_m' parameters to make it compatible with
+    conditional wrappers without entangling p(m1) and p(m2).
+    It is also usable outside conditional wrappers 
+    e.g with p(q) parametrisation or pairing functions, 
+    but 'mmin' and 'delta_m' need to be fixed.
+
+    Note that PL components are parametrised as follows:
+    $PL(m) \propto m^{- \alpha}$. 
+    Consequently, the model is mostly relevant for positive alpha parameters.
+    """
+
+    def __init__(self, flag_powerlaw_smoothing=False):
+        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+        self.population_parameters = [
+            'alpha_a', 
+            'mmin_a', 
+            'alpha_b', 
+            'mmin_b', 
+            'alpha_c', 
+            'mmin_c', 
+            'mmax', 
+            'mix_alpha', 
+            'mix_beta', 
+        ] + self.flag_powerlaw_smoothing*[
+            'delta_m_a', 
+            'delta_m_b', 
+            'delta_m_c'
+        ] + [
+            'mmin', # dummy parameter not used by self.prior
+            'delta_m', # dummy parameter not used by self.prior
+        ]
+
+    def update(self,**kwargs):
+        self.prior = TriplePowerLaw(
+            alpha_a   = -kwargs['alpha_a'], 
+            mmin_a    = kwargs['mmin_a'], 
+            mmax_a    = kwargs['mmax'], 
+            alpha_b   = -kwargs['alpha_b'], 
+            mmin_b    = kwargs['mmin_b'], 
+            mmax_b    = kwargs['mmax'], 
+            alpha_c   = -kwargs['alpha_c'], 
+            mmin_c    = kwargs['mmin_c'], 
+            mmax_c    = kwargs['mmax'], 
+            mix_a     = kwargs['mix_alpha'], 
+            mix_b     = kwargs['mix_beta'], 
+            smooth    = self.flag_powerlaw_smoothing, 
+            delta_m_a = kwargs.get('delta_m_a', 1.0), # if no smoothing, default 1. value
+            delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
+            delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
         )
 
 
 class massprior_4PL_global_mmax(pm_prob):
+    """
+    4 Power-Laws model with a global mmax parameter shared by all PL components.
+    Optional smoothing of low end of PL components.
+
+    Note that PL components are parametrised as follows:
+    $PL(m) \propto m^{- \alpha}$. 
+    Consequently, the model is mostly relevant for positive alpha parameters.
+    """
 
     def __init__(self, flag_powerlaw_smoothing=False):
         self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
@@ -2461,8 +2534,8 @@ class massprior_4PL_global_mmax(pm_prob):
             mix_b     = kwargs['mix_beta'], 
             mix_c     = kwargs['mix_gamma'], 
             smooth    = self.flag_powerlaw_smoothing, 
-            delta_m_a = kwargs.get('delta_m', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_b = kwargs.get('delta_m_b', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_c = kwargs.get('delta_m_c', 1.0), #if smoothing parameters are not given, inputs a default value
-            delta_m_d = kwargs.get('delta_m_c', 1.0) #if smoothing parameters are not given, inputs a default value
+            delta_m_a = kwargs.get('delta_m', 1.0), # if no smoothing, default 1. value
+            delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
+            delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
+            delta_m_d = kwargs.get('delta_m_c', 1.0) # if no smoothing, default 1. value
         )
