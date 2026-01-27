@@ -214,6 +214,94 @@ class massprior_MultiPeak(pm_prob):
                                              kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low']+5*kwargs['sigma_g_low'],
                                              kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high']+5*kwargs['sigma_g_high'])
 
+# TO EXPERIMENT WITH p(m1) AND p(m2) PARAMETERS
+class massprior_MLTP(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','m1min','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m1'] + \
+            ['mmin', 'delta_m', 'mmax'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['m1min'],kwargs['m1max'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['m1min'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['m1min'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m1'])
+
+class massprior_MLTP_jointmin(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','mmin','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m1'] + \
+            ['delta_m', 'mmax'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['mmin'],kwargs['m1max'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m1'])
+
+class massprior_MLTP_jointsmooth(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','m1min','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m'] + \
+            ['mmin', 'mmax'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['m1min'],kwargs['m1max'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['m1min'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['m1min'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m'])
+
+class massprior_MLTP_jointmax(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','m1min','mmax','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m1'] + \
+            ['mmin', 'delta_m'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['m1min'],kwargs['mmax'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['m1min'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['m1min'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m1'])
+
+class massprior_MLTP_jointminsmooth(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','mmin','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m'] + \
+            ['mmax'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['mmin'],kwargs['m1max'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m'])
+
+class massprior_MLTP_jointminmax(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','mmin','mmax','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m1'] + \
+            ['delta_m'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m1'])
+
+class massprior_MLTP_jointsmoothmax(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','m1min','mmax','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m'] + \
+            ['mmin'] # dummy parameters
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['m1min'],kwargs['mmax'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['m1min'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['m1min'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m'])
+
+class massprior_MLTP_jointminsmoothmax(pm_prob):
+    def __init__(self, flag_smoothing=False):
+        self.flag_smoothing = flag_smoothing
+        self.population_parameters = ['alpha','mmin','mmax','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m']
+    def update(self,**kwargs):
+        self.prior = PowerLawTwoGaussians(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
+        if self.flag_smoothing:
+            self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m'])
+
 
 #LVK reviewed
 class massprior_BrokenPowerLawMultiPeak(pm_prob):

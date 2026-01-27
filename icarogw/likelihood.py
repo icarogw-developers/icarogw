@@ -72,7 +72,20 @@ class hierarchical_likelihood(bilby.Likelihood):
         
         xp = get_module_array(self.injections.log_weights)
 
+        # EXPLORATORY SOLUTION TO AVOID NESSAI BREAK
+        # def safe_float(x):
+        #     """safe nan to num, converting to python scalar."""
+        #     return float(xp.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0))
+        
+        # def jitter_inf(x, inf_placeholder=1e100):
+        #     """Return very negative but finite, with random jitter to avoid sampler failure"""
+        #     eps = xp.finfo(float).eps
+        #     toret = - inf_placeholder * (1 + eps * (safe_float(x) - float(xp.random.rand())))
+        #     return toret
+
         if (Neff<self.neffINJ) | (Neff==0.):
+            # EXPLORATORY SOLUTION TO AVOID NESSAI BREAK
+            # return jitter_inf(Neff)
             return float(xp.nan_to_num(-xp.inf))
 
         # Update the weights on the PE
@@ -80,6 +93,8 @@ class hierarchical_likelihood(bilby.Likelihood):
         neff_PE_ev = self.posterior_samples_dict.get_effective_number_of_PE()
       
         if xp.any(neff_PE_ev<self.neffPE):
+            # EXPLORATORY SOLUTION TO AVOID NESSAI BREAK
+            # return jitter_inf(xp.min(neff_PE_ev))
             return float(xp.nan_to_num(-xp.inf))
 
         self.likelihood_variance = (xp.power(self.posterior_samples_dict.n_ev,2.)/Neff)*(1-Neff/self.injections.ntotal)+xp.sum(
@@ -88,6 +103,8 @@ class hierarchical_likelihood(bilby.Likelihood):
 
         if self.likelihood_variance_thr is not None:
             if self.likelihood_variance > self.likelihood_variance_thr:
+                # EXPLORATORY SOLUTION TO AVOID NESSAI BREAK
+                # return jitter_inf(self.likelihood_variance)
                 return float(xp.nan_to_num(-xp.inf))
 
         # Combine all the terms  
@@ -111,6 +128,16 @@ class hierarchical_likelihood(bilby.Likelihood):
             log_likeli = float(xp.nan_to_num(log_likeli))
             
         return float(cp2np(log_likeli))
+
+        # EXPLORATORY SOLUTION FOR -INF RETURN
+        # log_likeli = xp.nan_to_num(log_likeli, nan=-1e100, posinf=0.0, neginf=-1e100)
+        # log_likeli = float(cp2np(log_likeli))
+        # # absolute safety net
+        # if not np.isfinite(log_likeli):
+        #     print("Non-finite logL")
+        #     log_likeli = -1e100
+
+        # return log_likeli
 
 
 #LVK reviewed

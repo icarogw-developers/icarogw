@@ -150,7 +150,15 @@ def _highpass_filter(mass, mmin,delta_m):
 
     # Defines the f function as in Eq. B7 of https://arxiv.org/pdf/2010.14533.pdf
     # This line might raise a warnig for exp orverflow, however this is not important as it enters at denominator
-    effe_prime[select_window] = xp.exp(xp.nan_to_num((delta_m/mprime[select_window])+(delta_m/(mprime[select_window]-delta_m))))
+
+    # effe_prime[select_window] = xp.exp(xp.nan_to_num((delta_m/mprime[select_window])+(delta_m/(mprime[select_window]-delta_m))))
+
+    # The overflow is dangerous for GPU runs, so we force the implementation to avoid it.
+    arg = (delta_m/mprime[select_window]) + (delta_m/(mprime[select_window]-delta_m))
+    # hard numerical safety
+    arg = xp.clip(arg, -50, 50)
+    effe_prime[select_window] = xp.exp(arg)
+
     to_ret = 1./(effe_prime+1)
     to_ret[select_zero]=0.
     to_ret[select_one]=1.
