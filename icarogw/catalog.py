@@ -647,6 +647,7 @@ class  icarogw_catalog(object):
                         if 'mice' in self.band:
                             cosmo_to_build = FlatLambdaCDM(H0=70., Om0=0.25, Ob0=0.044) # MICE cosmology
                         cosmology_proxy.build_cosmology(cosmo_to_build)
+                        self.sch_fun.build_MF(cosmology_proxy)
                         dl_proxy=cosmology_proxy.z2dl(self.z_grid)
                         loaded_sch = True
 
