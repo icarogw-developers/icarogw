@@ -281,6 +281,10 @@ class posterior_samples(object):
         bw_method: str or float
             Bandwidth method to pass to scipy gaussian_kde
         '''
-        data = np.array([self.posterior_data[key] for key in event_parameters])
+        print('Fitting a gaussian KDE to the posterior samples with parameters: {:s}'.format(str(event_parameters)))
+        if len(event_parameters)==1:
+            data = self.posterior_data[event_parameters[0]]
+        else:
+            data = np.array([self.posterior_data[key] for key in event_parameters])
         self.kde = sn.stats.gaussian_kde(data,bw_method=bw_method)
         self.kde_parameters = event_parameters

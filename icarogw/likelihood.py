@@ -1,16 +1,18 @@
-from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, enable_cupy
+from .cupy_pal import cp2np, get_module_array
 from .stochastic import spectral_siren_vanilla_omega_gw
-import time
-import copy
 import bilby
-import icarogw
-from .wrappers import FlatLambdaCDM_wrap
+import numpy as np
+import copy as cp
+from scipy.interpolate import RegularGridInterpolator
 
 class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
-    def __init__(self, posterior_samples_dict_bright, posterior_samples_dict_dark,
-                 injections, 
-                 rate_model, 
-                 nparallel=None, neffPE=20,neffINJ=None,likelihood_variance_thr=None):        
+    # Note the posterior_samples_dict_bright_list is a list correspnding
+    # to the various EM counterparts detected
+    def __init__(self, list_posterior_samples_dict_bright, list_detection_probabilities,
+                 posterior_samples_dict_dark, pmiss_model,
+                 injections,
+                 rate_model,
+                 nparallel=None, neffPE=20, neffINJ=None, likelihood_variance_thr=None):
 
         # Saves injections in a cupyfied format
         self.injections=injections
@@ -20,10 +22,50 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
         self.rate_model=rate_model
 
         # Posterior samples for bright and dark sirens
-        self.posterior_samples_dict_bright=posterior_samples_dict_bright
+        self.list_posterior_samples_dict_bright=list_posterior_samples_dict_bright
         self.posterior_samples_dict_dark=posterior_samples_dict_dark
         
-        self.posterior_samples_dict_bright.build_parallel_posterior(nparallel=nparallel)
+        # Saves the detection probabilities models 
+        self.list_detection_probabilities=list_detection_probabilities
+        self.pmiss_model=pmiss_model
+
+        self.list_distance_kdes_interpolant_bright = []
+
+        for i in range(len(self.list_posterior_samples_dict_bright)):
+            list_kde = []
+            self.list_posterior_samples_dict_bright[i].build_parallel_posterior(nparallel=nparallel)        
+            for key in self.list_posterior_samples_dict_bright[i].posterior_samples_dict.keys():
+                self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].fit_gaussian_kde(['luminosity_distance','cos_theta_jn'])
+                
+                kde = self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].kde
+                
+                dl_interpo = np.linspace(self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].kde.dataset[0,:].min(), 
+                                         self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].kde.dataset[0,:].max(),
+                                         100)
+                
+                cos_theta_jn_interpo = np.linspace(self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].kde.dataset[1,:].min(),
+                                                 self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].kde.dataset[1,:].max(),
+                                                 200)
+                
+                XX, YY = np.meshgrid(dl_interpo, cos_theta_jn_interpo)
+                logpdfvals = kde.logpdf(np.vstack([XX.ravel(), YY.ravel()])).reshape(XX.shape)
+
+                ##################
+                #  Testing box
+                ##################
+                # import matplotlib.pyplot as plt
+                # plt.pcolormesh(XX, YY, np.exp(logpdfvals))
+                # plt.show(block=True)
+                # plt.close()
+                ##################
+                #  Testing box
+                ##################
+
+                list_kde.append(RegularGridInterpolator((dl_interpo, cos_theta_jn_interpo), logpdfvals.T,bounds_error=False, fill_value=-np.inf))
+                
+            # Each element of the lists below corresponds to the interpolant of the events for an EM counterpart
+            self.list_distance_kdes_interpolant_bright.append(cp.deepcopy(list_kde))
+
         self.posterior_samples_dict_dark.build_parallel_posterior(nparallel=nparallel)
 
         self.likelihood_variance_thr = likelihood_variance_thr
@@ -36,7 +78,8 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
             print('Using neffPE and neffINJ as numerical stability estimators')
             if neffINJ is None:
                 print('Setting neffINJ as 4 times observed signals')
-                self.neffINJ=4*(self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev) 
+                nev_total = np.sum([self.list_posterior_samples_dict_bright[i].n_ev for i in range(len(self.list_posterior_samples_dict_bright))]) + self.posterior_samples_dict_dark.n_ev
+                self.neffINJ=4*nev_total
             else:
                 self.neffINJ=neffINJ
         
@@ -60,13 +103,21 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
         
         # Update the weights on the PE for BRIGHT sirens
         self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_bright # Needed to identify the relavant PEs parameters
-        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_bright 
-        self.posterior_samples_dict_bright.update_weights(self.rate_model)
-        neff_PE_ev_bright = self.posterior_samples_dict_bright.get_effective_number_of_PE()
+        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_bright
+        neff_PE_ev_bright = []
+        for i in range(len(self.list_posterior_samples_dict_bright)):
+            self.list_detection_probabilities[i].update_cosmology(self.rate_model.cw) # Update the cosmologies in the detection prob models
+            self.rate_model.pdet_EM = self.list_detection_probabilities[i] # Updates in the rate model the EM detection prob
+            self.rate_model.kde_dl_fits = self.list_distance_kdes_interpolant_bright[i] # Updates in the rate model the distance KDE for the bright sirens
+            self.list_posterior_samples_dict_bright[i].update_weights(self.rate_model)
+            neff_PE_ev_bright.append(self.list_posterior_samples_dict_bright[i].get_effective_number_of_PE())
+        neff_PE_ev_bright = xp.hstack(neff_PE_ev_bright)
 
         # Update the weights on the PE for DARK sirens
         self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_dark # Needed to identify the relavant PEs parameters
-        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_dark 
+        self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_dark
+        self.pmiss_model.update_cosmology(self.rate_model.cw) # Update the cosmologies in the pmiss model
+        self.rate_model.pdet_EM = self.pmiss_model # Updates in the rate model the EM detection prob for dark sirens
         self.posterior_samples_dict_dark.update_weights(self.rate_model)
         neff_PE_ev_dark = self.posterior_samples_dict_dark.get_effective_number_of_PE()
 
@@ -75,9 +126,8 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
         if xp.any(neff_PE_ev_total<self.neffPE):
             return -xp.inf
         
-        nev_total = self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev
-        Ns_array = xp.hstack([self.posterior_samples_dict_bright.Ns_array,self.posterior_samples_dict_dark.Ns_array])
-
+        nev_total = xp.sum([self.list_posterior_samples_dict_bright[i].n_ev for i in range(len(self.list_posterior_samples_dict_bright))]) + self.posterior_samples_dict_dark.n_ev
+        Ns_array = xp.hstack([self.list_posterior_samples_dict_bright[i].Ns_array for i in range(len(self.list_posterior_samples_dict_bright))] + [self.posterior_samples_dict_dark.Ns_array])
         self.likelihood_variance = (xp.power(nev_total,2.)/Neff)*(1-Neff/self.injections.ntotal)+xp.sum(
             xp.power(neff_PE_ev_total,-1.)*(1-neff_PE_ev_total/Ns_array)
         )
@@ -89,14 +139,19 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
         # Combine all the terms  
         if self.rate_model.scale_free:
             # Log likelihood for scale free model, Eq. 1.3 on the document
-            log_likeli = xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights))-self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.pseudo_rate) + \
-            xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))-self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.pseudo_rate)
+            log_likeli = xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))-self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.pseudo_rate) +\
+            xp.sum([xp.sum(xp.log(self.list_posterior_samples_dict_bright[i].sum_weights))-
+                    self.list_posterior_samples_dict_bright[i].n_ev*xp.log(self.injections.pseudo_rate) 
+                    for i in range(len(self.list_posterior_samples_dict_bright))])
         else:
             Nexp=self.injections.expected_number_detections()
             # Log likelihood for  the model, Eq. 1.1 on the document
             log_likeli = -Nexp + \
-                self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights)) + \
-                self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))      
+                self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights)) + \
+                xp.sum([self.list_posterior_samples_dict_bright[i].n_ev*xp.log(self.injections.Tobs)+
+                        xp.sum(xp.log(self.list_posterior_samples_dict_bright[i].sum_weights)) 
+                        for i in range(len(self.list_posterior_samples_dict_bright))]) 
+      
         
         # Controls on the value of the log-likelihood. If the log-likelihood is -inf, then set it to the smallest
         # python valye 1e-309
@@ -109,6 +164,110 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
             log_likeli = log_likeli
             
         return cp2np(log_likeli)
+
+# class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
+#     def __init__(self, posterior_samples_dict_bright, posterior_samples_dict_dark,
+#                  injections, 
+#                  rate_model, 
+#                  nparallel=None, neffPE=20,neffINJ=None,likelihood_variance_thr=None):        
+
+#         # Saves injections in a cupyfied format
+#         self.injections=injections
+#         self.neffPE=neffPE
+
+#         # Rate models for bright and dark sirens
+#         self.rate_model=rate_model
+
+#         # Posterior samples for bright and dark sirens
+#         self.posterior_samples_dict_bright=posterior_samples_dict_bright
+#         self.posterior_samples_dict_dark=posterior_samples_dict_dark
+        
+#         self.posterior_samples_dict_bright.build_parallel_posterior(nparallel=nparallel)
+#         self.posterior_samples_dict_dark.build_parallel_posterior(nparallel=nparallel)
+
+#         self.likelihood_variance_thr = likelihood_variance_thr
+
+#         if likelihood_variance_thr is not None:
+#             print('Using Likelihood variance as numerical stability estimator \n We will not consider neffPE or neffINJ')
+#             self.neffPE = -1.
+#             self.neffINJ = -1.
+#         else:    
+#             print('Using neffPE and neffINJ as numerical stability estimators')
+#             if neffINJ is None:
+#                 print('Setting neffINJ as 4 times observed signals')
+#                 self.neffINJ=4*(self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev) 
+#             else:
+#                 self.neffINJ=neffINJ
+        
+#         super().__init__(parameters={ll: None for ll in self.rate_model.population_parameters})
+                
+#     def log_likelihood(self):
+#         '''
+#         Evaluates and return the log-likelihood
+#         '''          
+
+#         self.rate_model.update(**{key:self.parameters[key] for key in self.rate_model.population_parameters})
+#         self.injections.update_weights(self.rate_model)
+#         Neff=self.injections.effective_injections_number()
+#         # If the injections are not enough return 0, you cannot go to that point. This is done because the number of injections that you have
+#         # are not enough to calculate the selection effect
+        
+#         xp = get_module_array(self.injections.log_weights)
+        
+#         if (Neff<self.neffINJ) | (Neff==0.):
+#             return -xp.inf
+        
+#         # Update the weights on the PE for BRIGHT sirens
+#         self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_bright # Needed to identify the relavant PEs parameters
+#         self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_bright 
+#         self.posterior_samples_dict_bright.update_weights(self.rate_model)
+#         neff_PE_ev_bright = self.posterior_samples_dict_bright.get_effective_number_of_PE()
+
+#         # Update the weights on the PE for DARK sirens
+#         self.rate_model.PEs_parameters = self.rate_model.PEs_parameters_dark # Needed to identify the relavant PEs parameters
+#         self.rate_model.log_rate_PE = self.rate_model.log_rate_PE_dark 
+#         self.posterior_samples_dict_dark.update_weights(self.rate_model)
+#         neff_PE_ev_dark = self.posterior_samples_dict_dark.get_effective_number_of_PE()
+
+#         neff_PE_ev_total = xp.hstack([neff_PE_ev_bright,neff_PE_ev_dark])
+
+#         if xp.any(neff_PE_ev_total<self.neffPE):
+#             return -xp.inf
+        
+#         nev_total = self.posterior_samples_dict_bright.n_ev + self.posterior_samples_dict_dark.n_ev
+#         Ns_array = xp.hstack([self.posterior_samples_dict_bright.Ns_array,self.posterior_samples_dict_dark.Ns_array])
+
+#         self.likelihood_variance = (xp.power(nev_total,2.)/Neff)*(1-Neff/self.injections.ntotal)+xp.sum(
+#             xp.power(neff_PE_ev_total,-1.)*(1-neff_PE_ev_total/Ns_array)
+#         )
+
+#         if self.likelihood_variance_thr is not None:
+#             if self.likelihood_variance > self.likelihood_variance_thr:
+#                 return -xp.inf
+        
+#         # Combine all the terms  
+#         if self.rate_model.scale_free:
+#             # Log likelihood for scale free model, Eq. 1.3 on the document
+#             log_likeli = xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights))-self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.pseudo_rate) + \
+#             xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))-self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.pseudo_rate)
+#         else:
+#             Nexp=self.injections.expected_number_detections()
+#             # Log likelihood for  the model, Eq. 1.1 on the document
+#             log_likeli = -Nexp + \
+#                 self.posterior_samples_dict_bright.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_bright.sum_weights)) + \
+#                 self.posterior_samples_dict_dark.n_ev*xp.log(self.injections.Tobs)+xp.sum(xp.log(self.posterior_samples_dict_dark.sum_weights))      
+        
+#         # Controls on the value of the log-likelihood. If the log-likelihood is -inf, then set it to the smallest
+#         # python valye 1e-309
+#         if log_likeli == xp.inf:
+#             raise ValueError('LOG-likelihood must be smaller than infinite')
+
+#         if xp.isnan(log_likeli):
+#             log_likeli = -xp.inf
+#         else:
+#             log_likeli = log_likeli
+            
+#         return cp2np(log_likeli)
 
 
 
@@ -218,7 +377,6 @@ class hierarchical_likelihood(bilby.Likelihood):
             
         return float(cp2np(log_likeli))
 
-
 #LVK reviewed
 class hierarchical_likelihood_v1(bilby.Likelihood):
     def __init__(self, posterior_samples_dict, injections, rate_model, nparallel=None, neffPE=20,neffINJ=None,likelihood_variance_thr=None):
@@ -324,7 +482,6 @@ class hierarchical_likelihood_v1(bilby.Likelihood):
             
         return cp2np(log_likeli)
 
-
 class hierarchical_likelihood_noevents(bilby.Likelihood):
     def __init__(self, injections, rate_model):
         '''
@@ -371,7 +528,6 @@ class hierarchical_likelihood_noevents(bilby.Likelihood):
             log_likeli = float(xp.nan_to_num(log_likeli))
             
         return float(cp2np(log_likeli))
-
 
 class Poisson_times_Stochastic_CBC_likelihood(hierarchical_likelihood):
     def __init__(self, posterior_samples_dict, injections, rate_model, look_up_Om0, stochastic_data, nparallel=None, neffPE=20, neffINJ=None):

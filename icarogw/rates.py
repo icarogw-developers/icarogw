@@ -2,7 +2,6 @@ from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, is
 from .conversions import detector2source_jacobian, detector2source, detector2source_jacobian_q, detector2source_jacobian_single_mass
 from scipy.stats import gaussian_kde
 from .wrappers import modgravity_wrappers, lcdm_wrappers
-import bright_sirens_tools as bst
 
 class CBC_rate_bright_and_dark_sirens_redshiftless(object):
     def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,
@@ -76,7 +75,6 @@ class CBC_rate_bright_and_dark_sirens_redshiftless(object):
     def log_rate_PE_bright(self,prior,**kwargs):
         '''
         This method calculates the weights (CBC merger rate per year at detector) for the posterior samples. Samples must be reweighted for pdet
-\        
         Parameters
         ----------
         prior: array
@@ -133,16 +131,12 @@ class CBC_rate_bright_and_dark_sirens_redshiftless(object):
             
         return log_out
 
-
 class CBC_rate_bright_and_dark_sirens(object):
-    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,
-                 pmiss_GRB_and_KN, EoS, scale_free=False):
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper, scale_free=False):
         
         self.cw = cosmology_wrapper
         self.mw = mass_wrapper
         self.rw = rate_wrapper
-        self.pmiss_GRB_and_KN = pmiss_GRB_and_KN
-        self.EoS = EoS
         self.scale_free = scale_free
         
         if scale_free:
@@ -150,8 +144,8 @@ class CBC_rate_bright_and_dark_sirens(object):
         else:
             self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters + ['R0']
             
-        self.PEs_parameters_dark = set(['mass_1', 'mass_2', 'luminosity_distance'] + self.pmiss_GRB_and_KN.event_parameters)
-        self.PEs_parameters_bright = ['mass_1', 'mass_2', 'luminosity_distance','z_EM']
+        self.PEs_parameters_dark = ['mass_1', 'mass_2', 'luminosity_distance','chi_1','cos_theta_jn']
+        self.PEs_parameters_bright = ['mass_1', 'mass_2', 'luminosity_distance','chi_1','cos_theta_jn','z_EM']
         self.injections_parameters = ['mass_1', 'mass_2', 'luminosity_distance']
             
     def update(self,**kwargs):
@@ -187,9 +181,7 @@ class CBC_rate_bright_and_dark_sirens(object):
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         
         # Spin 0.4 is hardcoded according to the simulation we are currently doing
-        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
-        # First term is the probability of not emitting, second term the probability of emitting times the probability of losing
-        addon = xp.logical_not(has_EM_emission) + has_EM_emission*self.pmiss_GRB_and_KN(**kwargs) 
+        addon = self.pdet_EM(ms1, ms2,kwargs['chi_1'],kwargs['cos_theta_jn'],z)
 
         # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
         log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
@@ -218,31 +210,156 @@ class CBC_rate_bright_and_dark_sirens(object):
         xp = get_module_array(prior)
         z = kwargs['z_EM']
         ms1, ms2 = kwargs['mass_1']/(1+z), kwargs['mass_2']/(1+z) # Source mass
-                        
-        # Fit the KDEs for the events luminosity distances if they do not exist
-        # Fitting KDE is valid only if the GW likelihood can be factorized in dl and mass terms.
-        if not hasattr(self, 'kde_dl_fits'):
-            print('Fitting KDEs for {:d} signals'.format(kwargs['luminosity_distance'].shape[0]))
-            self.kde_dl_fits = []
-            for i in range(kwargs['luminosity_distance'].shape[0]):
-                self.kde_dl_fits.append(gaussian_kde(kwargs['luminosity_distance'][i]))
-
+    
         log_GW_dl_posterior = []
+        fake_cosiota_matrix = []
         for i in range(kwargs['luminosity_distance'].shape[0]):
-            weig_ap = self.kde_dl_fits[i].logpdf(self.cw.cosmology.z2dl(kwargs['z_EM'][i,:]))
-            log_GW_dl_posterior.append(weig_ap)
-        # Matrix of distance likelihood evaulations for N_bright x N_PEs
-        log_GW_dl_posterior = xp.stack(log_GW_dl_posterior)
+            # Restrict the integral for cosiota samples
+            dlgw = self.cw.cosmology.z2dl(kwargs['z_EM'][i,:])
 
-        # Spin 0.4 is hardcoded according to the simulation we are currently doing
-        has_EM_emission = bst.prob_EM_emission.has_emission_dark_siren(ms1, ms2,spin1=np.ones_like(ms1)*0.4,eos=self.EoS)
+            idx_dlgw = np.where((kwargs['luminosity_distance'][i,:]>=dlgw.min()) & 
+                                (kwargs['luminosity_distance'][i,:]<=dlgw.max()))[0]
+            
+            if idx_dlgw.shape[0]==0:
+                log_GW_dl_posterior.append(-np.inf*xp.ones_like(kwargs['cos_theta_jn'][i,:]))
+                # Saves the original PEs
+                fake_cosiota_matrix.append(kwargs['cos_theta_jn'][i,:])
+                continue
+
+            # Resamples cosiota uniform in the GW likelihood volume
+            fake_cosiota = np.random.uniform(kwargs['cos_theta_jn'][i,idx_dlgw].min(), kwargs['cos_theta_jn'][i,idx_dlgw].max(), 
+                                             size=kwargs['cos_theta_jn'][i,:].shape[0])
+
+            fake_cosiota_matrix.append(fake_cosiota)
+            weig_ap =self.kde_dl_fits[i](xp.column_stack((dlgw,fake_cosiota)))
+
+            #########################################################
+            #  Testing box
+            #########################################################
+            # import matplotlib.pyplot as plt
+            # fig, ax = plt.subplots(3,2, figsize=(10,10))
+            # ax[0,0].pcolormesh(self.kde_dl_fits[i].grid[0], self.kde_dl_fits[i].grid[1], xp.exp(self.kde_dl_fits[i].values.T), shading='auto')
+
+            # has_EM_emission = self.pdet_EM(ms1[i,:], ms2[i,:],
+            #                                kwargs['chi_1'][i,:],
+            #                                fake_cosiota,
+            #                                kwargs['z_EM'][i,:])
+
+            # idx_to_p = has_EM_emission==1
+            # if idx_to_p.any():
+            #     ax[0,0].scatter(self.cw.cosmology.z2dl(kwargs['z_EM'][i,:])[idx_to_p],
+            #                   fake_cosiota[idx_to_p],
+            #                     c='b', s=5)
+
+            # ax[0,0].set_xlabel('Luminosity Distance (Mpc)')
+            # ax[0,0].set_ylabel('Cosine of the Inclination Angle')
+            # ax[0,0].set_title('Distance Prior')
+            # fig.colorbar(ax[0,0].collections[0], ax=ax[0,0],label='GW likelihood')
+
+
+            # ax[1,0].pcolormesh(self.kde_dl_fits[i].grid[0], self.kde_dl_fits[i].grid[1], xp.exp(self.kde_dl_fits[i].values.T), shading='auto')
+            # if np.logical_not(idx_to_p).any():
+            #     ax[1,0].scatter(self.cw.cosmology.z2dl(kwargs['z_EM'][i,:])[~idx_to_p],
+            #               fake_cosiota[~idx_to_p],
+            #                 c='r', s=5)
+            # ax[1,0].set_xlabel('Luminosity Distance (Mpc)')
+            # ax[1,0].set_ylabel('Cosine of the Inclination Angle')
+            # ax[1,0].set_title('Distance Prior')
+            # fig.colorbar(ax[1,0].collections[0], ax=ax[1,0],label='GW likelihood')
+
+
+            # ax[2,0].scatter(self.cw.cosmology.z2dl(kwargs['z_EM'][i,:]), fake_cosiota, c=xp.exp(weig_ap), s=5)
+            # ax[2,0].set_xlabel('Luminosity Distance (Mpc)')
+            # ax[2,0].set_ylabel('Cosine of the Inclination Angle')
+            # ax[2,0].set_title('Distance Prior (Weighted)')
+            # fig.colorbar(ax[2,0].collections[0], ax=ax[2,0],label='Weights')
+
+
+            # m1_grid, m2_grid = np.meshgrid(np.linspace(ms2[i,:].min(), ms1[i,:].max(), 50), 
+            #                                np.linspace(ms2[i,:].min(), ms1[i,:].max(), 50))
+            # idx_select = np.where(m2_grid.flatten()<=m1_grid.flatten())[0]   
+            # m1_grid = m1_grid.flatten()
+            # m2_grid = m2_grid.flatten()
+            # m1_grid, m2_grid = m1_grid[idx_select], m2_grid[idx_select]
+
+            # has_EM_emission_grid = self.pdet_EM(m1_grid, m2_grid,
+            #                                     kwargs['chi_1'][i,:].mean()*np.ones_like(m1_grid),
+            #                                     fake_cosiota.mean()*np.ones_like(m1_grid),
+            #                                     kwargs['z_EM'][i,:].mean()*np.ones_like(m1_grid))
+
+            # ax[0,1].set_title('z={:.2f}, chi={:.2f}, cosiota={:.2f}: values'.format(
+            #     kwargs['z_EM'][i,:].mean(), kwargs['chi_1'][i,:].mean(), fake_cosiota.mean()))
+            # ax[0,1].scatter(m1_grid, m2_grid, c=has_EM_emission_grid, s=5)
+            # if idx_to_p.any():
+            #     ax[0,1].scatter(ms1[i,:][idx_to_p], ms2[i,:][idx_to_p], c='b', s=5,alpha=0.5)
+            # ax[0,1].set_xlabel('Source Mass 1 (Msun)')
+            # ax[0,1].set_ylabel('Source Mass 2 (Msun)')
+            # fig.colorbar(ax[0,1].collections[0], ax=ax[0,1],label='EM emission')
+
+
+            # ax[1,1].set_title('z={:.2f}, chi={:.2f}, cosiota={:.2f}: values'.format(
+            #     kwargs['z_EM'][i,:].mean(), kwargs['chi_1'][i,:].mean(), fake_cosiota.mean()))
+            # ax[1,1].scatter(m1_grid, m2_grid, c=has_EM_emission_grid, s=5)
+            # if np.logical_not(idx_to_p).any():
+            #     ax[1,1].scatter(ms1[i,:][~idx_to_p], ms2[i,:][~idx_to_p], c='r', s=5,alpha=0.5)
+            # ax[1,1].set_xlabel('Source Mass 1 (Msun)')
+            # ax[1,1].set_ylabel('Source Mass 2 (Msun)')
+            # fig.colorbar(ax[1,1].collections[0], ax=ax[1,1],label='EM emission')
+
+            # # has_EM_emission_grid = self.pdet_EM(m1_grid, m2_grid,
+            # #                                     kwargs['chi_1'][i,:].mean()*np.ones_like(m1_grid),
+            # #                                     fake_cosiota.mean()*np.ones_like(m1_grid),
+            # #                                     kwargs['z_EM'][i,:].min()*np.ones_like(m1_grid))
+
+            # # ax[2,1].set_title('z={:.2f}, chi={:.2f}, cosiota={:.2f}: mean values'.format(
+            # #     kwargs['z_EM'][i,:].min(), kwargs['chi_1'][i,:].mean(), fake_cosiota.mean()))
+            # # ax[2,1].scatter(m1_grid, m2_grid, c=has_EM_emission_grid, s=5)
+            # # ax[2,1].scatter(ms1[i,:], ms2[i,:], c=has_EM_emission, cmap='bwr_r', s=5,alpha=0.2)
+            # # ax[2,1].set_xlabel('Source Mass 1 (Msun)')
+            # # ax[2,1].set_ylabel('Source Mass 2 (Msun)')
+            # # fig.colorbar(ax[2,1].collections[0], ax=ax[2,1],label='EM emission')
+
+
+            # plt.tight_layout()
+            # plt.show(block=True)
+            #########################################################
+            #########################################################
+
+            log_GW_dl_posterior.append(weig_ap)
+
+        # Matrix of distance likelihood evaulations for N_bright x N_PEs
+        log_GW_dl_posterior = xp.vstack(log_GW_dl_posterior)
+        fake_cosiota_matrix = xp.vstack(fake_cosiota_matrix)
+
+        has_EM_emission = self.pdet_EM(ms1, ms2,kwargs['chi_1'],fake_cosiota_matrix,kwargs['z_EM'])
 
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        
         # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document. The 3*xp.log1p(z) includes jacobian from masses
-        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
-        -xp.log(prior)-3*xp.log1p(z) \
-        + xp.log(has_EM_emission) + log_GW_dl_posterior - 2*xp.log(self.cw.cosmology.z2dl(kwargs['z_EM'])) # Added EM modelling, last term removes d2 prior on PEs
-                    
+        log_weights=(self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz 
+        -xp.log(prior)-3*xp.log1p(z)
+        + xp.log(has_EM_emission) + log_GW_dl_posterior - 2*xp.log(self.cw.cosmology.z2dl(kwargs['z_EM']))) 
+        # SM - I am unsure by the last term as it should be included in priors
+        # Added EM modelling, last term removes d2 prior on PEs
+
+        ###################################
+        # Other TEST BOX
+        ###################################
+        # from scipy.special import logsumexp
+        # print('#### TEST')
+        # print('h0 is ', self.cw.cosmology.little_h)
+        # print('Ppop mass term', np.exp(logsumexp(self.mw.log_pdf(ms1,ms2),axis=1)))
+        # print('R(z) Dvc/Dz', np.exp(logsumexp(self.rw.rate.log_evaluate(z)+log_dVc_dz,axis=1)))
+        # print('EM emission', np.exp(logsumexp(xp.log(has_EM_emission),axis=1)))
+        # print('GW CF likelihood', np.exp(logsumexp(log_GW_dl_posterior,axis=1)))
+        # print('Min log GW CF likelihood', np.min(log_GW_dl_posterior,axis=1))
+        # print('Max log GW CF likelihood', np.max(log_GW_dl_posterior,axis=1))
+        # print('Prior', np.exp(logsumexp(-xp.log(prior)-3*xp.log1p(z)-2*xp.log(self.cw.cosmology.z2dl(kwargs['z_EM'])),axis=1)))
+        # print('TOTAL', np.exp(logsumexp(log_weights,axis=1)))
+        # print('##########')
+        ###################################
+        ###################################
+
         if not self.scale_free:
             log_out = log_weights + xp.log(self.R0)
         else:
@@ -267,8 +384,7 @@ class CBC_rate_bright_and_dark_sirens(object):
         log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         
         # Sum over posterior samples in Eq. 1.1 on the icarogw2.0 document
-        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz \
-        -xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z)
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+log_dVc_dz-xp.log(prior)-xp.log(detector2source_jacobian(z,self.cw.cosmology))-xp.log1p(z)
         
         if not self.scale_free:
             log_out = log_weights + xp.log(self.R0)
