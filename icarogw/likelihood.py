@@ -12,7 +12,8 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
                  posterior_samples_dict_dark, pmiss_model,
                  injections,
                  rate_model,
-                 nparallel=None, neffPE=20, neffINJ=None, likelihood_variance_thr=None):
+                 nparallel_bright=None,nparallel_dark=None, 
+                 neffPE=20, neffINJ=None, likelihood_variance_thr=None):
 
         # Saves injections in a cupyfied format
         self.injections=injections
@@ -33,7 +34,7 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
 
         for i in range(len(self.list_posterior_samples_dict_bright)):
             list_kde = []
-            self.list_posterior_samples_dict_bright[i].build_parallel_posterior(nparallel=nparallel)        
+            self.list_posterior_samples_dict_bright[i].build_parallel_posterior(nparallel=nparallel_bright)        
             for key in self.list_posterior_samples_dict_bright[i].posterior_samples_dict.keys():
                 self.list_posterior_samples_dict_bright[i].posterior_samples_dict[key].fit_gaussian_kde(['luminosity_distance','cos_theta_jn'])
                 
@@ -66,7 +67,7 @@ class hierarchical_likelihood_v1_bright_and_dark(bilby.Likelihood):
             # Each element of the lists below corresponds to the interpolant of the events for an EM counterpart
             self.list_distance_kdes_interpolant_bright.append(cp.deepcopy(list_kde))
 
-        self.posterior_samples_dict_dark.build_parallel_posterior(nparallel=nparallel)
+        self.posterior_samples_dict_dark.build_parallel_posterior(nparallel=nparallel_dark)
 
         self.likelihood_variance_thr = likelihood_variance_thr
 
