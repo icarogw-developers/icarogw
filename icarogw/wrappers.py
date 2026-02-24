@@ -309,7 +309,7 @@ class massprior_PL2G(pm_prob):
     def __init__(self, flag_powerlaw_smoothing=False):
         self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
         self.population_parameters = ['alpha', 'mmin', 'mmax', 'mu_g_a', 'sigma_g_a', 'lambda_g_a', 'mu_g_b', 'sigma_g_b', 'lambda_g_b'] + \
-            self.flag_smoothing * ['delta_m']
+            self.flag_powerlaw_smoothing * ['delta_m']
     def update(self, **kwargs):
         self.prior = PL2G(
             minpl = kwargs['mmin'], 
