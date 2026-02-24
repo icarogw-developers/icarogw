@@ -1453,6 +1453,118 @@ class PowerLawTwoGaussians(basic_1dimpdf):
         g_part =self.TGlow.cdf(x)*self.lambdag*self.lambdaglow+self.TGhigh.cdf(x)*self.lambdag*(1-self.lambdaglow)
         return xp.log(pl_part+g_part)
 
+
+class PL2G(basic_1dimpdf):
+    
+    def __init__(
+        self, 
+        minpl, 
+        maxpl, 
+        alpha, 
+        mean_g_a, 
+        sigma_g_a, 
+        min_g_a, 
+        max_g_a, 
+        lambda_g_a, 
+        mean_g_b, 
+        sigma_g_b, 
+        min_g_b, 
+        max_g_b, 
+        lambda_g_b, 
+        smooth=False, 
+        delta=1., 
+    ):
+        '''
+        Class for a PL + 2 G probability
+        
+        Parameters
+        ----------
+        minpl,maxpl,alpha,lambdag,lambdaglow,meanglow,sigmaglow,minglow,maxglow,
+  meanghigh,sigmaghigh,minghigh,maxghigh: float
+            In sequence, minimum, maximum, exponential of the powerlaw part. Fraction of pdf in gaussians and fraction in the lower gaussian.
+            Mean, sigma, minvalue and maxvalue of the lower gaussian. Mean, sigma, minvalue and maxvalue of the higher gaussian 
+        '''
+        super().__init__(
+            min(minpl, min_g_a, min_g_b),
+            max(maxpl, max_g_a, max_g_b)
+        )
+        self.minpl = minpl
+        self.maxpl = maxpl
+        self.alpha = alpha
+        self.delta = delta
+        self.mean_g_a = mean_g_a
+        self.sigma_g_a = sigma_g_a
+        self.min_g_a = min_g_a
+        self.max_g_a = max_g_a
+        self.lambda_g_a = lambda_g_a
+        self.mean_g_b = mean_g_b
+        self.sigma_g_b = sigma_g_b
+        self.min_g_b = min_g_b
+        self.lambda_g_b = lambda_g_b
+
+        self.powerlaw_class = PowerLaw(
+            minpl, 
+            maxpl, 
+            alpha
+        )
+        if smooth: 
+            self.powerlaw_class = LowpassSmoothedProb(
+                self.powerlaw_class, 
+                self.delta
+            )
+
+        self.gaussian_class_a = TruncatedGaussian(
+            mean_g_a, 
+            sigma_g_a, 
+            min_g_a, 
+            max_g_a
+        )
+        self.gaussian_class_b = TruncatedGaussian(
+            mean_g_b, 
+            sigma_g_b, 
+            min_g_b, 
+            max_g_b
+        )
+        
+    def _log_pdf(self,x):
+        '''
+        Evaluates the log_pdf
+        
+        Parameters
+        ----------
+        x: xp.array
+            where to evaluate the log_pdf
+        
+        Returns
+        -------
+        log_pdf: xp.array
+        '''
+        xp = get_module_array(x)
+        pl_part =  self.powerlaw_class.log_pdf(x)   + xp.log1p(- self.lambda_g_a - self.lambda_g_b)
+        g_a_part = self.gaussian_class_a.log_pdf(x) + xp.log(self.lambda_g_a)
+        g_b_part = self.gaussian_class_b.log_pdf(x) + xp.log(self.lambda_g_b)
+        return xp.logaddexp(xp.logaddexp(pl_part, g_a_part), g_b_part)
+    
+    def _log_cdf(self,x):
+        '''
+        Evaluates the log_cdf
+        
+        Parameters
+        ----------
+        x: xp.array
+            where to evaluate the log_cdf
+        
+        Returns
+        -------
+        log_cdf: xp.array
+        '''
+        xp = get_module_array(x)
+        pl_part =  self.powerlaw_class.log_cdf(x)   + xp.log1p(- self.lambda_g_a - self.lambda_g_b)
+        g_a_part = self.gaussian_class_a.log_cdf(x) + xp.log(self.lambda_g_a)
+        g_b_part = self.gaussian_class_b.log_cdf(x) + xp.log(self.lambda_g_b)
+        return xp.logaddexp(xp.logaddexp(pl_part, g_a_part), g_b_part)
+
+
 # LVK Reviewed
 class absL_PL_inM(basic_1dimpdf):
     
