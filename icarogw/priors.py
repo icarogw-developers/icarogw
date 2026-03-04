@@ -551,8 +551,8 @@ class LowpassSmoothedProb(basic_1dimpdf):
         
         # Find the values of the integrals in the region of the window function before and after the smoothing
         int_array = np.linspace(originprob.minval,originprob.minval+bottomsmooth,1000)
-        integral_before = np.trapz(self.origin_prob.pdf(int_array),int_array)
-        integral_now = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array)
+        integral_before = np.trapezoid(self.origin_prob.pdf(int_array),int_array)
+        integral_now = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array)
 
         self.integral_before = integral_before
         self.integral_now = integral_now
@@ -639,8 +639,8 @@ class LowpassSmoothedProbEvolving(basic_1dimpdf):
         
         # Find the values of the integrals in the region of the window function before and after the smoothing
         int_array = np.linspace(originprob.minval,originprob.minval+bottomsmooth,1000)
-        integral_before = np.trapz(self.origin_prob.pdf(int_array),int_array, axis=0)
-        integral_now = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array, axis=0)
+        integral_before = np.trapezoid(self.origin_prob.pdf(int_array),int_array, axis=0)
+        integral_now = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array, axis=0)
 
         self.integral_before = integral_before
         self.integral_now = integral_now
@@ -711,16 +711,16 @@ class SmoothedPlusDipProb(basic_1dimpdf):
 
         # Find the values of the integrals in the region of the window function before and after the smoothing
         int_array = np.linspace(originprob.minval,originprob.minval+bottomsmooth,1000)
-        integral_before = np.trapz(self.origin_prob.pdf(int_array),int_array)
-        integral_now = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top, self.top_smooth)*_notch_filter(int_array, self.left_dip, self.left_dip_smooth, self.right_dip, self.right_dip_smooth, self.deep), int_array)
+        integral_before = np.trapezoid(self.origin_prob.pdf(int_array),int_array)
+        integral_now = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top, self.top_smooth)*_notch_filter(int_array, self.left_dip, self.left_dip_smooth, self.right_dip, self.right_dip_smooth, self.deep), int_array)
         
         int_array = np.linspace(leftdip,rightdip,1000)
-        integral_before2 = np.trapz(self.origin_prob.pdf(int_array),int_array)
-        integral_now2 = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top, self.top_smooth)*_notch_filter(int_array, self.left_dip, self.left_dip_smooth, self.right_dip, self.right_dip_smooth, self.deep), int_array)
+        integral_before2 = np.trapezoid(self.origin_prob.pdf(int_array),int_array)
+        integral_now2 = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top, self.top_smooth)*_notch_filter(int_array, self.left_dip, self.left_dip_smooth, self.right_dip, self.right_dip_smooth, self.deep), int_array)
                        
         int_array = np.linspace(originprob.maxval-topsmooth,originprob.maxval,1000)
-        integral_before3 = np.trapz(self.origin_prob.pdf(int_array),int_array)
-        integral_now3 = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top,self.top_smooth)*_notch_filter(int_array,     
+        integral_before3 = np.trapezoid(self.origin_prob.pdf(int_array),int_array)
+        integral_now3 = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth)*_lowpass_filter(int_array, self.top,self.top_smooth)*_notch_filter(int_array,     
                         self.left_dip, self.left_dip_smooth, self.right_dip, self.right_dip_smooth, self.deep), int_array)
 
         self.integral_before = integral_before 
