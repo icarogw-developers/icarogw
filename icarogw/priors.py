@@ -2186,14 +2186,14 @@ class SmoothStep():
                 sn.special.comb(self.n + j,     j,          exact=True) *
                 sn.special.comb(2*self.n + 1,   self.n - j, exact=True) *
                 sn.special.comb(self.n + j + 1, k,          exact=True) *
-                np.power(self.a,     self.n + j + 1 - k) /
-                np.power(self.delta, self.n + j + 1)
+                np.power(self.a,     self.n + j + 1 - k) *
+                np.power(self.delta, - (self.n + j + 1))
             )
-            if (self.n + 1 - j) % 2 == 0: 
-                c_k += c_kj
-            else:
-                c_k -= c_kj
-        return c_k
+            c_k += c_kj
+        if (self.n + 1 - k) % 2 == 0: 
+            return c_k
+        else:
+            return - c_k
 
     def value(self, x):
 
@@ -2204,7 +2204,7 @@ class SmoothStep():
         to_ret = xp.zeros_like(x)
         
         if self.delta > 0.:
-            for k in range(0, 2 * self.n + 1):
+            for k in range(0, 2 * self.n + 1 + 1):
                 to_ret[mask_smooth] += (
                     xp.power(x[mask_smooth], k) *
                     self.coeff(k)
@@ -2257,7 +2257,7 @@ class SmoothPowerLaw_AnalyticalNorm(basic_1dimpdf):
         res_no_norm = self.alpha * xp.log(x)
         if self.smoothstep is not None:
             res_no_norm += xp.log(self.smoothstep.value(x))
-        return res_no_norm - xp.log(self.norm())
+        return res_no_norm - xp.log(self.compute_norm())
     
     # FIXME
     def _log_cdf(self, x):
