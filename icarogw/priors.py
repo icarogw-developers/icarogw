@@ -1929,6 +1929,10 @@ class GaussianLinear():
         return self.muz, self.sigmaz
 
 
+# ---------------------------------------------------------------------- #
+# 3PL and 4PL stationary models compatible with curret icarogw structure #
+# ---------------------------------------------------------------------- #
+
 class TriplePowerLaw(basic_1dimpdf):
     '''
         Class implementing the mass function model for three stationary PowerLaws.
@@ -2150,3 +2154,116 @@ class QuadruplePowerLaw(basic_1dimpdf):
         log_pl_c = self.powerlaw_class_c.log_cdf(x) + xp.log(self.mix_c)
         log_pl_d = self.powerlaw_class_d.log_cdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
         return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
+
+
+# ---------------------------------------------------------------------- #
+# PL and G distributions analytically normalised                         #
+# ---------------------------------------------------------------------- #
+
+
+class SmoothStep():
+
+    def __init__(self, n, a, delta):
+        """
+        A class to implement smoothstep functions
+        (see https://en.wikipedia.org/wiki/Smoothstep)
+        i.e polynomial high pass filters of degree 2n+1
+        smoothly interpolating between 0 and 1 in the range [a, a+delta]
+        """
+        self.n = n
+        self.a = a
+        self.delta = delta
+
+    def coeff(self, k):
+        """
+        returns the coefficient associated to x^k in the polynomial expansion
+        S_n(x, a, delta) = sum_{k=0}^{2*n+1} c_k(a, delta) x^k
+        where S_n smoothly interpolates between 0 and 1 in the range [a, a+delta]
+        """
+        c_k = 0
+        for j in range(max(0, k - self.n - 1), self.n + 1):
+            c_kj = (
+                sn.special.comb(self.n + j,     j,          exact=True) *
+                sn.special.comb(2*self.n + 1,   self.n - j, exact=True) *
+                sn.special.comb(self.n + j + 1, k,          exact=True) *
+                np.power(self.a,     self.n + j + 1 - k) /
+                np.power(self.delta, self.n + j + 1)
+            )
+            if (self.n + 1 - j) % 2 == 0: 
+                c_k += c_kj
+            else:
+                c_k -= c_kj
+        return c_k
+
+    def value(self, x):
+
+        xp = get_module_array(x)
+        mask_one = (x >= self.a + self.delta)
+        mask_zero = x <= self.a
+        mask_smooth = xp.logical_not(mask_zero) & xp.logical_not(mask_one)
+        to_ret = xp.zeros_like(x)
+        
+        if self.delta > 0.:
+            for k in range(0, 2 * self.n + 1):
+                to_ret[mask_smooth] += (
+                    xp.power(x[mask_smooth], k) *
+                    self.coeff(k)
+                )
+
+        else:
+            to_ret[mask_smooth] = 1.
+
+        to_ret[mask_one] = 1.
+        
+        return to_ret
+
+
+class SmoothPowerLaw_AnalyticalNorm(basic_1dimpdf):
+
+    def __init__(
+        self, 
+        alpha, 
+        a, 
+        b, 
+        smooth=False, 
+        delta=1., 
+        n=1,
+    ):
+        self.alpha = alpha
+        self.a = a
+        self.b = b
+        super().__init__(minval=a, maxval=b)
+        if smooth:
+            self.smoothstep = SmoothStep(n, a, delta)
+        else:
+            self.smoothstep = None
+    
+    def compute_norm(self):
+        if self.a >= self.b: 
+            norm = 0.
+        elif self.smoothstep is None:
+            norm = PL_normfact(self.a, self.b, self.alpha)
+        else:
+            norm = PL_normfact(self.a + self.smoothstep.delta, self.b, self.alpha)
+            for k in range(0, 2 * self.smoothstep.n + 1):
+                norm += (
+                    self.smoothstep.coeff(k) * 
+                    PL_normfact(self.a, self.a + self.smoothstep.delta, k + self.alpha)
+                )
+        return norm
+
+    def _log_pdf(self, x):
+        xp = get_module_array(x)
+        res_no_norm = self.alpha * xp.log(x)
+        if self.smoothstep is not None:
+            res_no_norm += xp.log(self.smoothstep.value(x))
+        return res_no_norm - xp.log(self.norm())
+    
+    # FIXME
+    def _log_cdf(self, x):
+        xp = get_module_array(x)
+        if self.alpha == -1.:
+            toret = xp.log(xp.log(x/self.minval)/self.norm_fact)
+        else:
+            toret = xp.log(((xp.power(x,self.alpha+1)-xp.power(self.minpl,self.alpha+1))/(self.alpha+1))/self.norm_fact)
+        return toret
