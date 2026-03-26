@@ -5,7 +5,7 @@ from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, 
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
-from .priors import TriplePowerLaw, QuadruplePowerLaw, PL2G
+from .priors import TriplePowerLaw, QuadruplePowerLaw, PowerLaw2Gaussians_AnalyticalNorm
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -188,7 +188,13 @@ class massprior_PowerLaw(pm_prob):
         self.population_parameters=['alpha','mmin','mmax']
     def update(self,**kwargs):
         self.prior=PowerLaw(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'])
-        
+
+class massprior_Gaussian(pm_prob):
+    def __init__(self):
+        self.population_parameters=['mu_g','sigma_g']
+    def update(self,**kwargs):
+        self.prior=TruncatedGaussian(kwargs['mu_g'],kwargs['sigma_g'], max(0, kwargs['mu_g'] - 5*kwargs['sigma_g']), kwargs['mu_g'] + 5*kwargs['sigma_g'])
+
 #LVK reviewed
 class massprior_PowerLawPeak(pm_prob):
     def __init__(self):
@@ -214,7 +220,42 @@ class massprior_MultiPeak(pm_prob):
                                              kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low']+5*kwargs['sigma_g_low'],
                                              kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high']+5*kwargs['sigma_g_high'])
 
-# TO EXPERIMENT WITH p(m1) AND p(m2) PARAMETERS
+# =============================================================== #
+#            U N D E R   E X P E R I M E N T A T I O N            #
+# =============================================================== #
+
+class massprior_MLTP_AnalyticalLowSmooth(pm_prob):
+    def __init__(self, flag_smoothing=False, smoothstep_order=0):
+        self.flag_smoothing = flag_smoothing
+        self.smoothstep_order = smoothstep_order
+        self.population_parameters = (
+            ['alpha','m1min','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
+            self.flag_smoothing * ['delta_m1'] + \
+            ['mmin', 'delta_m', 'mmax'] # dummy parameters
+        )
+    def update(self,**kwargs):
+        self.prior = PowerLaw2Gaussians_AnalyticalNorm(
+            kwargs['m1min'],
+            kwargs['m1max'],
+            -kwargs['alpha'],
+            kwargs['lambda_g'],
+            kwargs['lambda_g_low'],
+            kwargs['mu_g_low'],
+            kwargs['sigma_g_low'],
+            kwargs['m1min'],
+            kwargs['m1max'],
+            kwargs['mu_g_high'],
+            kwargs['sigma_g_high'],
+            kwargs['m1min'],
+            kwargs['m1max'],
+            smooth=self.flag_smoothing,
+            smoothstep_order=self.smoothstep_order,
+            smoothpl=kwargs.get("delta_m1", 1.),
+            smoothglow=kwargs.get("delta_m1", 1.),
+            smoothghigh=kwargs.get("delta_m1", 1.),
+        )
+
+
 class massprior_MLTP(pm_prob):
     def __init__(self, flag_smoothing=False):
         self.flag_smoothing = flag_smoothing
@@ -301,33 +342,6 @@ class massprior_MLTP_jointminsmoothmax(pm_prob):
         self.prior = PowerLawTwoGaussians(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'],kwargs['lambda_g'],kwargs['lambda_g_low'],kwargs['mu_g_low'],kwargs['sigma_g_low'],kwargs['mmin'],kwargs['mu_g_low'] + 5*kwargs['sigma_g_low'],kwargs['mu_g_high'],kwargs['sigma_g_high'],kwargs['mmin'],kwargs['mu_g_high'] + 5*kwargs['sigma_g_high'])
         if self.flag_smoothing:
             self.prior = LowpassSmoothedProb(self.prior, kwargs['delta_m'])
-
-class massprior_PL2G(pm_prob):
-    """
-    Wrapper for a MLTP-like model, where smoothing is (optionally) only applied to the PL component.
-    """
-    def __init__(self, flag_powerlaw_smoothing=False):
-        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
-        self.population_parameters = ['alpha', 'mmin', 'mmax', 'mu_g_a', 'sigma_g_a', 'lambda_g_a', 'mu_g_b', 'sigma_g_b', 'lambda_g_b'] + \
-            self.flag_powerlaw_smoothing * ['delta_m']
-    def update(self, **kwargs):
-        self.prior = PL2G(
-            minpl = kwargs['mmin'], 
-            maxpl = kwargs['mmax'], 
-            alpha = - kwargs['alpha'], 
-            mean_g_a = kwargs['mu_g_a'], 
-            sigma_g_a = kwargs['sigma_g_a'], 
-            min_g_a = kwargs['mmin'], 
-            max_g_a = kwargs['mu_g_a'] + 5*kwargs['sigma_g_a'], 
-            lambda_g_a = kwargs['lambda_g_a'], 
-            mean_g_b = kwargs['mu_g_b'], 
-            sigma_g_b = kwargs['sigma_g_b'], 
-            min_g_b = kwargs['mmin'], 
-            max_g_b = kwargs['mu_g_b'] + 5*kwargs['sigma_g_b'], 
-            lambda_g_b = kwargs['lambda_g_b'], 
-            smooth = self.flag_powerlaw_smoothing, 
-            delta = kwargs.get('delta_m', 1.)
-        )
 
 
 #LVK reviewed
