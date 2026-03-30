@@ -149,16 +149,16 @@ class pm_prob(object):
 
 class mass_ratio_prior_Gaussian(pm_prob):
     def __init__(self):
-        self.population_parameters=['mu_q','sigma_q']
+        self.population_parameters=['mu_q','sigma_q', 'qmin']
     def update(self,**kwargs):
-        p1=TruncatedGaussian(kwargs['mu_q'],kwargs['sigma_q'],0.,1.)
+        p1=TruncatedGaussian(kwargs['mu_q'],kwargs['sigma_q'],kwargs['qmin'],1.)
         self.prior=p1
 
 class mass_ratio_prior_Powerlaw(pm_prob):
     def __init__(self):
-        self.population_parameters=['alpha_q']
+        self.population_parameters=['alpha_q', 'qmin']
     def update(self,**kwargs):
-        self.prior=PowerLaw(0.,1.,kwargs['alpha_q'])
+        self.prior=PowerLaw(kwargs['qmin'],1.,kwargs['alpha_q'])
 
 class lowSmoothedwrapper(pm_prob):
    def __init__(self, mw):
