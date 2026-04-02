@@ -755,6 +755,47 @@ class spinprior_ECOs_totally_reflective(object):
 # Redshift evolving models #
 # ------------------------ #
 
+class PowerLaw():
+    '''
+        Class implementing the mass function model for one stationary PowerLaw.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaw.
+
+        The module is stand alone and not compatible with other wrappers.
+    '''
+
+    def __init__(self, flag_powerlaw_smoothing = 1):
+        
+        self.population_parameters   = ['alpha', 'mmin', 'mmax']
+        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+
+        if self.flag_powerlaw_smoothing: self.population_parameters += ['delta_m']
+
+    def update(self,**kwargs):
+
+        self.alpha = kwargs['alpha']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+        if self.flag_powerlaw_smoothing:
+            self.delta_m = kwargs['delta_m']
+
+    def pdf(self,m):
+
+        powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
+        # Add left smoothing to the PowerLaw.
+        if self.flag_powerlaw_smoothing:
+            powerlaw_class = LowpassSmoothedProb(powerlaw_class, self.delta_m)
+        powerlaw_part = powerlaw_class.pdf(m)
+
+        return powerlaw_part
+    
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
+
+
 class PowerLaw_PowerLaw():
     '''
         Class implementing the mass function model for two stationary PowerLaws.
@@ -1705,6 +1746,26 @@ class GaussianRedshiftLinear_GaussianRedshiftLinear_GaussianRedshiftLinear():
         return xp.log(self.pdf(m,z))
 
 
+class Gaussian():
+
+    def __init__(self):
+        self.population_parameters = ['mu', 'sigma', 'mmin', 'mmax']
+
+    def update(self,**kwargs):
+        self.mu    = kwargs['mu']
+        self.sigma = kwargs['sigma']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+    def pdf(self,m):
+        tmp = TruncatedGaussian(self.mu, self.sigma, self.mmin, self.mmax)
+        return tmp.pdf(m)
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
+
+
 class GaussianEvolving():
     '''
         Class implementing the mass function model conditioned on redshift p(m|z), for
@@ -1757,6 +1818,125 @@ class GaussianEvolving():
         return self.muz, self.sigmaz
 
 
+class Gaussian_Gaussian_Gaussian_Gaussian():
+    """
+    Properly normalized exponential-of-Gaussians density:
+
+        log p(m) = sum_i w_i * N(m | mu_i, sigma_i) - log Z
+
+    Normalization is computed numerically on a fixed grid:
+        - 1000 points
+        - m in [mmin, 120]
+    """
+
+    def __init__(self):
+        self.population_parameters = [
+            'mu_a', 'sigma_a',
+            'mu_b', 'sigma_b',
+            'mu_c', 'sigma_c',
+            'mu_d', 'sigma_d',
+            'mmin',
+            'mix_alpha', 'mix_beta', 'mix_gamma', 'mix_delta'
+        ]
+
+        # Set backend (numpy or cupy) and dtype once
+        self.xp, self.dtype = _set_xp_and_dtype()
+
+    def update(self, **kwargs):
+        xp = self.xp
+
+        # Gaussian parameters
+        self.mu_a    = kwargs['mu_a']
+        self.sigma_a = kwargs['sigma_a']
+        self.mu_b    = kwargs['mu_b']
+        self.sigma_b = kwargs['sigma_b']
+        self.mu_c    = kwargs['mu_c']
+        self.sigma_c = kwargs['sigma_c']
+        self.mu_d    = kwargs['mu_d']
+        self.sigma_d = kwargs['sigma_d']
+
+        self.mmin = kwargs['mmin']
+
+        # Cast weights onto the correct backend and dtype
+        self.mix_alpha = xp.asarray(kwargs['mix_alpha'], dtype=self.dtype)
+        self.mix_beta  = xp.asarray(kwargs['mix_beta'],  dtype=self.dtype)
+        self.mix_gamma = xp.asarray(kwargs['mix_gamma'], dtype=self.dtype)
+        self.mix_delta = xp.asarray(kwargs['mix_delta'], dtype=self.dtype)
+
+        self._compute_log_norm()
+
+    def _energy(self, m):
+        """
+        Energy function:
+            E(m) = sum_i w_i * N_i(m)
+        """
+        xp = self.xp
+
+        ga = xp.asarray(
+            GaussianStationary(self.mu_a, self.sigma_a, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gb = xp.asarray(
+            GaussianStationary(self.mu_b, self.sigma_b, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gc = xp.asarray(
+            GaussianStationary(self.mu_c, self.sigma_c, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gd = xp.asarray(
+            GaussianStationary(self.mu_d, self.sigma_d, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+
+        return (
+            self.mix_alpha * ga
+          + self.mix_beta  * gb
+          + self.mix_gamma * gc
+          + self.mix_delta * gd
+        )
+
+    def _compute_log_norm(self):
+        """
+        Numerically compute log Z on a fixed grid:
+            - 1000 points
+            - upper bound = 120
+        """
+        xp = self.xp
+
+        self.m_grid = xp.linspace(
+            self.mmin,
+            120.0,
+            1000,
+            dtype=self.dtype,
+        )
+
+        dm = self.m_grid[1] - self.m_grid[0]
+
+        energy = self._energy(self.m_grid)
+
+        # log Z = log ∫ exp(E(m)) dm
+        self.log_norm = self._logsumexp(energy) + xp.log(dm)
+
+    def _logsumexp(self, x):
+        xp = self.xp
+        xmax = xp.max(x)
+        return xmax + xp.log(xp.sum(xp.exp(x - xmax)))
+
+    def log_pdf(self, m):
+        """
+        Properly normalized log-PDF.
+        """
+        return self._energy(m) - self.log_norm
+
+    def pdf(self, m):
+        """
+        Properly normalized PDF.
+        """
+        xp = self.xp
+        return xp.exp(self.log_pdf(m))
+    
+    
 ###########
 # Splines #
 ###########
@@ -2552,7 +2732,7 @@ class LogSplineCoxDeBoor:
         try:
             return self.t.get()
         except Exception:
-            return self.knots
+            return self.t
 
 
 # PowerLaw models / secondary experiments
