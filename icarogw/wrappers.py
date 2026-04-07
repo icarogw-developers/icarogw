@@ -884,6 +884,47 @@ class spinprior_ECOs_totally_reflective(object):
 # Redshift evolving models #
 # ------------------------ #
 
+class PowerLaw():
+    '''
+        Class implementing the mass function model for one stationary PowerLaw.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaw.
+
+        The module is stand alone and not compatible with other wrappers.
+    '''
+
+    def __init__(self, flag_powerlaw_smoothing = 1):
+        
+        self.population_parameters   = ['alpha', 'mmin', 'mmax']
+        self.flag_powerlaw_smoothing = flag_powerlaw_smoothing
+
+        if self.flag_powerlaw_smoothing: self.population_parameters += ['delta_m']
+
+    def update(self,**kwargs):
+
+        self.alpha = kwargs['alpha']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+        if self.flag_powerlaw_smoothing:
+            self.delta_m = kwargs['delta_m']
+
+    def pdf(self,m):
+
+        powerlaw_class = PowerLawStationary(self.alpha, self.mmin, self.mmax)
+        # Add left smoothing to the PowerLaw.
+        if self.flag_powerlaw_smoothing:
+            powerlaw_class = LowpassSmoothedProb(powerlaw_class, self.delta_m)
+        powerlaw_part = powerlaw_class.pdf(m)
+
+        return powerlaw_part
+    
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
+
+
 class PowerLaw_PowerLaw():
     '''
         Class implementing the mass function model for two stationary PowerLaws.
@@ -1834,6 +1875,26 @@ class GaussianRedshiftLinear_GaussianRedshiftLinear_GaussianRedshiftLinear():
         return xp.log(self.pdf(m,z))
 
 
+class Gaussian():
+
+    def __init__(self):
+        self.population_parameters = ['mu', 'sigma', 'mmin', 'mmax']
+
+    def update(self,**kwargs):
+        self.mu    = kwargs['mu']
+        self.sigma = kwargs['sigma']
+        self.mmin  = kwargs['mmin']
+        self.mmax  = kwargs['mmax']
+
+    def pdf(self,m):
+        tmp = TruncatedGaussian(self.mu, self.sigma, self.mmin, self.mmax)
+        return tmp.pdf(m)
+
+    def log_pdf(self,m):
+        xp = get_module_array(m)
+        return xp.log(self.pdf(m))
+
+
 class GaussianEvolving():
     '''
         Class implementing the mass function model conditioned on redshift p(m|z), for
@@ -1886,6 +1947,125 @@ class GaussianEvolving():
         return self.muz, self.sigmaz
 
 
+class Gaussian_Gaussian_Gaussian_Gaussian():
+    """
+    Properly normalized exponential-of-Gaussians density:
+
+        log p(m) = sum_i w_i * N(m | mu_i, sigma_i) - log Z
+
+    Normalization is computed numerically on a fixed grid:
+        - 1000 points
+        - m in [mmin, 120]
+    """
+
+    def __init__(self):
+        self.population_parameters = [
+            'mu_a', 'sigma_a',
+            'mu_b', 'sigma_b',
+            'mu_c', 'sigma_c',
+            'mu_d', 'sigma_d',
+            'mmin',
+            'mix_alpha', 'mix_beta', 'mix_gamma', 'mix_delta'
+        ]
+
+        # Set backend (numpy or cupy) and dtype once
+        self.xp, self.dtype = _set_xp_and_dtype()
+
+    def update(self, **kwargs):
+        xp = self.xp
+
+        # Gaussian parameters
+        self.mu_a    = kwargs['mu_a']
+        self.sigma_a = kwargs['sigma_a']
+        self.mu_b    = kwargs['mu_b']
+        self.sigma_b = kwargs['sigma_b']
+        self.mu_c    = kwargs['mu_c']
+        self.sigma_c = kwargs['sigma_c']
+        self.mu_d    = kwargs['mu_d']
+        self.sigma_d = kwargs['sigma_d']
+
+        self.mmin = kwargs['mmin']
+
+        # Cast weights onto the correct backend and dtype
+        self.mix_alpha = xp.asarray(kwargs['mix_alpha'], dtype=self.dtype)
+        self.mix_beta  = xp.asarray(kwargs['mix_beta'],  dtype=self.dtype)
+        self.mix_gamma = xp.asarray(kwargs['mix_gamma'], dtype=self.dtype)
+        self.mix_delta = xp.asarray(kwargs['mix_delta'], dtype=self.dtype)
+
+        self._compute_log_norm()
+
+    def _energy(self, m):
+        """
+        Energy function:
+            E(m) = sum_i w_i * N_i(m)
+        """
+        xp = self.xp
+
+        ga = xp.asarray(
+            GaussianStationary(self.mu_a, self.sigma_a, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gb = xp.asarray(
+            GaussianStationary(self.mu_b, self.sigma_b, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gc = xp.asarray(
+            GaussianStationary(self.mu_c, self.sigma_c, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+        gd = xp.asarray(
+            GaussianStationary(self.mu_d, self.sigma_d, self.mmin).pdf(m),
+            dtype=self.dtype,
+        )
+
+        return (
+            self.mix_alpha * ga
+          + self.mix_beta  * gb
+          + self.mix_gamma * gc
+          + self.mix_delta * gd
+        )
+
+    def _compute_log_norm(self):
+        """
+        Numerically compute log Z on a fixed grid:
+            - 1000 points
+            - upper bound = 120
+        """
+        xp = self.xp
+
+        self.m_grid = xp.linspace(
+            self.mmin,
+            120.0,
+            1000,
+            dtype=self.dtype,
+        )
+
+        dm = self.m_grid[1] - self.m_grid[0]
+
+        energy = self._energy(self.m_grid)
+
+        # log Z = log ∫ exp(E(m)) dm
+        self.log_norm = self._logsumexp(energy) + xp.log(dm)
+
+    def _logsumexp(self, x):
+        xp = self.xp
+        xmax = xp.max(x)
+        return xmax + xp.log(xp.sum(xp.exp(x - xmax)))
+
+    def log_pdf(self, m):
+        """
+        Properly normalized log-PDF.
+        """
+        return self._energy(m) - self.log_norm
+
+    def pdf(self, m):
+        """
+        Properly normalized PDF.
+        """
+        xp = self.xp
+        return xp.exp(self.log_pdf(m))
+    
+    
 ###########
 # Splines #
 ###########
@@ -2503,282 +2683,185 @@ class LogSplineCoxDeBoor:
     - Coefficients can be negative as the log(pdf), but still ensuring that the pdf is always positive.
     """
 
-    def __init__(self, n_basis: int = 6, degree: int = 2, spacing: str = "uniform"):
-        """
-        n_basis: number of interior (free) coefficients. The full basis count = n_basis + 2.
-        degree: polynomial degree of the spline (typically 1..4).
-        spacing: "uniform" or "log" for knot spacing on [mmin, mmax]
-        """
-        self.n_basis_user = int(n_basis)
-        if self.n_basis_user < 1:
-            raise ValueError("n_basis must be >= 1 (at least one interior basis).")
-        self.n_basis = self.n_basis_user + 2  # include first and last fixed bases
+    def __init__(self, n_basis: int = 6, degree: int = 2, spacing: str = "log"):
+        # n_basis is the number of interior basis functions supplied by the user;
+        # total basis count = interior + 2 (first and last fixed)
+        self.n_basis = int(n_basis) + 2
         self.degree = int(degree)
-        if self.degree < 0:
-            raise ValueError("degree must be non-negative")
         self.spacing = spacing
+
         if spacing not in ("uniform", "log"):
             raise ValueError("spacing must be 'uniform' or 'log'")
+        
+        self.population_parameters = ['mmin', 'mmax'] + [f'c{i}' for i in range(1, self.n_basis-1)]
 
-        # population parameters: mmin, mmax, c1..cN (interior coefficients)
-        self.population_parameters = (['mmin', 'mmax'] +
-                                      [f'c{i}' for i in range(1, self.n_basis_user + 1)])
-
-        # placeholders
-        self.xmin = None
-        self.xmax = None
-        self.knots = None  # knot vector
-        self.weights = None  # full weights array length n_basis (first/last fixed)
-        self.norm = None  # log-normalization constant (log integral)
-        self._grid_size = 1000  # number of points for numerical normalization
-
-        # xp and dtype
+        # Backend (numpy or cupy) and dtype (float32 on GPU by default)
         self.xp, self.dtype = _set_xp_and_dtype()
 
-    # -----------------
-    # Knot construction
-    # -----------------
-    def _make_knots(self):
-        xp = self.xp
-        k = self.degree
-        n = self.n_basis
-
-        # number of interior knots (excluding clamped repeats)
-        # For n basis functions and degree k, knot vector length = n + k + 1
-        # The number of unique internal knots (excluding clamped endpoint repeats) is:
-        n_int = n - k - 1
-        if n_int < 0:
-            raise ValueError("n_basis (including the two fixed ends) must be >= degree + 1")
-
-        if self.spacing == "uniform":
-            # we want n_int+2 endpoints in the linspace (including x_min & x_max),
-            # then drop the endpoints to get interior unique positions
-            interior = xp.linspace(self.xmin, self.xmax, n_int + 2, dtype=self.dtype)
-        else:
-            if float(self.xmin) <= 0:
-                raise ValueError("log spacing requires mmin > 0")
-            interior = xp.exp(
-                xp.linspace(xp.log(self.xmin), xp.log(self.xmax), n_int + 2, dtype=self.dtype)
-            )
-
-        # remove endpoints (they will be added by clamping)
-        if interior.size > 2:
-            interior = interior[1:-1]
-        else:
-            interior = xp.asarray([], dtype=self.dtype)
-
-        # clamped ends: repeat endpoints k+1 times
-        t_start = xp.full(k + 1, self.xmin, dtype=self.dtype)
-        t_end = xp.full(k + 1, self.xmax, dtype=self.dtype)
-
-        knots = xp.concatenate([t_start, interior, t_end])
-        # final length should be n + k + 1
-        expected = n + k + 1
-        if knots.size != expected:
-            # If something went wrong, raise a helpful error
-            raise RuntimeError(f"Unexpected knot vector length {knots.size}, expected {expected}")
-        return knots
-
-    # ------------------------
-    # Cox-de Boor (vectorized)
-    # ------------------------
-    def basis(self, x):
+    def bspline_basis(self, x, t, k = 3):
         """
-        Compute all B-spline basis functions at positions x.
-        Returns array shape (..., n_basis) matching x's leading dimensions.
+        Compute B-spline basis functions using Cox-de Boor recursion.
         """
         xp = self.xp
-        dtype = self.dtype
+        x = xp.asarray(x, dtype=self.dtype)
+        t = xp.asarray(t, dtype=self.dtype)
+        n_basis = len(t) - k - 1
+        n_points = len(x)
 
-        scalar_input = False
-        x_arr = xp.asarray(x, dtype=dtype)
-        orig_shape = x_arr.shape
-        # flatten to 1D for evaluation
-        if x_arr.ndim == 0:
-            x_arr = x_arr[None]
-            scalar_input = True
-        else:
-            x_arr = x_arr.ravel()
-        N = x_arr.size
+        # Zeroth-degree basis
+        B = xp.zeros((n_points, n_basis), dtype=x.dtype)
+        for i in range(n_basis):
+            B[:, i] = xp.where((x >= t[i]) & (x < t[i + 1]), 1.0, 0.0)
+        if x.size and t.size:
+            B[x == t[-1], -1] = 1.0
 
-        t = self.knots
-        if t is None:
-            raise RuntimeError("knots have not been constructed; call update(...) first.")
-        k = self.degree
-        n_basis = self.n_basis
-
-        # Degree 0 basis:
-        B = xp.zeros((N, n_basis), dtype=dtype)
-        t0 = t[:n_basis]
-        t1 = t[1:n_basis + 1]
-
-        # include left-closed intervals [t_i, t_{i+1}) except the last interval which is closed on right
-        mask = (x_arr[:, None] >= t0[None, :]) & (x_arr[:, None] < t1[None, :])
-        B[mask] = 1.0
-
-        # left boundary exact equality (x == t[0]) -> first basis = 1
-        left = (x_arr == t[0])
-        if xp.any(left):
-            B[left, 0] = 1.0
-
-        # right boundary exact equality (x == t[-1]) -> last basis = 1
-        right = (x_arr == t[-1])
-        if xp.any(right):
-            B[right, -1] = 1.0
-
-        # Recursion for d = 1..k
+        # Cox-de Boor recursion
         for d in range(1, k + 1):
-            # slices for denominators (length n_basis)
-            t_i = t[:n_basis]                   # t[i]
-            t_id = t[d:n_basis + d]             # t[i + d]
-            t_ip1 = t[1:n_basis + 1]            # t[i+1]
-            t_ip1d1 = t[d + 1:n_basis + d + 1]  # t[i + d + 1]
+            t_i = t[:n_basis]
+            t_id = t[d:n_basis + d]
+            t_ip1 = t[1:n_basis + 1]
+            t_ip1d1 = t[d + 1:n_basis + d + 1]
 
-            denom1 = t_id - t_i         # shape (n_basis,)
-            denom2 = t_ip1d1 - t_ip1    # shape (n_basis,)
+            denom1 = xp.where(t_id - t_i > 0, t_id - t_i, 1.0)
+            denom2 = xp.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
 
-            # term1: (x - t_i) / (t_{i+d} - t_i) * B^{d-1}_i
-            numer1 = (x_arr[:, None] - t_i[None, :])
-            term1 = _safe_divide(xp, numer1, denom1[None, :], dtype) * B
+            term1 = ((x[:, None] - t_i[None, :]) / denom1[None, :]) * B
+            term1 = xp.where(denom1[None, :] > 0, term1, 0.0)
 
-            # term2: (t_{i+d+1} - x) / (t_{i+d+1} - t_{i+1}) * B^{d-1}_{i+1}
             term2 = xp.zeros_like(B)
             if n_basis > 1:
-                numer2 = (t_ip1d1[None, :-1] - x_arr[:, None])  # aligns with i = 0..n_basis-2
-                denom2_slice = denom2[None, :-1]
-                # B[:, 1:] corresponds to B^{d-1}_{i+1}
-                term2[:, :-1] = _safe_divide(xp, numer2, denom2_slice, dtype) * B[:, 1:]
+                term2[:, :-1] = ((t_ip1d1[None, :-1] - x[:, None]) / denom2[None, :-1]) * B[:, 1:]
+                term2 = xp.where(denom2[None, :] > 0, term2, 0.0)
 
             B = term1 + term2
 
-        # reshape back to original shape + n_basis
-        out_shape = orig_shape + (n_basis,)
-        B = B.reshape(out_shape)
-        if scalar_input:
-            return B[0]  # return shape (n_basis,)
-        return B  # shape (..., n_basis)
+        return B
 
-    # ----------------------
-    # Update / Normalization
-    # ----------------------
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        xp = self.xp
+        spacing = self.spacing
+        k = self.degree
+        n = self.n_basis
+
+        if spacing == "log":
+            self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
+            from_x = xp.exp
+        else:  # uniform
+            self.xmin, self.xmax = self.mmin, self.mmax
+            from_x = lambda x: x
+
+        # Number of interior knot *locations*
+        # This guarantees: len(t) = n + k + 1
+        interior = xp.linspace(
+            self.xmin,
+            self.xmax,
+            n - k + 1,
+            dtype=self.dtype
+        )
+        t_start, t_end = xp.repeat(interior[0], k + 1), xp.repeat(interior[-1], k + 1)
+        self.t = xp.concatenate([t_start, interior[1:-1], t_end]) # Clamped knot vector
+
+        self._x_grid = xp.linspace(self.xmin, self.xmax, 1000, dtype=self.dtype)
+        self._m_grid = from_x(self._x_grid)
+        self._B_grid = self.bspline_basis(self._x_grid, self.t, k=k)
+
     def update(self, **kwargs):
         """
-        Update spline parameters.
-
-        Required kwargs:
-        - mmin: left endpoint
-        - mmax: right endpoint
-        - c1..cN: interior coefficients (N == n_basis_user)
-
-        Interior coefficients are used exactly as provided (first and last coefficients remain 0).
-        After updating weights, the numeric normalization constant is computed.
+        Update spline parameters and coefficients.
         """
         xp = self.xp
-        dtype = self.dtype
+        self.mmin, self.mmax = kwargs['mmin'], kwargs['mmax']
+        self._setup_grid_and_knots()
 
-        if 'mmin' not in kwargs or 'mmax' not in kwargs:
-            raise ValueError("update requires 'mmin' and 'mmax'")
+        coeff_keys = [f'c{i}' for i in range(1, self.n_basis - 1)]
+        coeffs_list = [0.0] + [kwargs.get(k, 0.0) for k in coeff_keys] + [0.0]
+        self.coeffs = xp.asarray(coeffs_list, dtype=self.dtype)
 
-        self.xmin = xp.asarray(kwargs['mmin'], dtype=dtype)
-        self.xmax = xp.asarray(kwargs['mmax'], dtype=dtype)
-        if float(self.xmax) <= float(self.xmin):
-            raise ValueError("mmax must be > mmin")
-
-        if self.spacing == "log" and float(self.xmin) <= 0:
-            raise ValueError("log spacing requires mmin > 0")
-
-        # Build knots
-        self.knots = self._make_knots()
-
-        # Assemble weights (first and last are fixed zero)
-        w = xp.zeros(self.n_basis, dtype=dtype)
-        # interior coefficients from kwargs: c1..cN
-        interior = xp.zeros(self.n_basis_user, dtype=dtype)
-        for i in range(1, self.n_basis_user + 1):
-            interior[i - 1] = xp.asarray(kwargs.get(f'c{i}', 0.0), dtype=dtype)
-
-        w[1:-1] = interior
-        self.weights = w
-
-        # Compute normalization constant
-        self._compute_norm()
-
-    def _compute_norm(self):
-        xp = self.xp
-        dtype = self.dtype
-
-        # Build integration grid
-        if self.spacing == "log":
-            grid = xp.exp(
-                xp.linspace(xp.log(self.xmin), xp.log(self.xmax), self._grid_size, dtype=dtype)
-            )
-        else:
-            grid = xp.linspace(self.xmin, self.xmax, self._grid_size, dtype=dtype)
-
-        B = self.basis(grid)  # shape (grid_size, n_basis)
-        # dot each row of B with weights -> logp at grid
-        logp = xp.dot(B, self.weights)
-
-        # stabilize with log-sum-exp style
-        m = float(xp.max(logp))
-        shifted = xp.exp(logp - m)
-        Z = float(xp.trapz(shifted, grid))
-        if Z <= 0 or (not xp.isfinite(Z)):
-            raise ValueError("Spline has zero or invalid integral during normalization.")
-
-        self.norm = m + xp.log(Z)
-
-    # ----------
-    # Evaluation
-    # ----------
-    def log_pdf(self, x):
+    def eval_spline(self, m):
         """
-        Evaluate log(pdf) at x (scalar or array). Values outside [xmin, xmax] return -inf.
+        Evaluate the spline at mass m.
         """
         xp = self.xp
-        dtype = self.dtype
+        m = xp.asarray(m, dtype=self.dtype)
+        if self.spacing == "log": x = xp.log(m)
+        else:                     x = m
+        B = self.bspline_basis(x.ravel(), self.t, k=self.degree)
+        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+        s_flat = B.dot(coeffs)
+        return s_flat.reshape(x.shape)
 
-        x_arr = xp.asarray(x, dtype=dtype)
-        scalar_input = False
-        if x_arr.ndim == 0:
-            x_arr = x_arr[None]
-            scalar_input = True
-
-        out = xp.full(x_arr.shape, -xp.inf, dtype=dtype)
-        # mask in domain (closed interval)
-        mask = (x_arr >= self.xmin) & (x_arr <= self.xmax)
-        if not xp.any(mask):
-            return out[0] if scalar_input else out
-
-        B = self.basis(x_arr[mask])  # shape (M, n_basis)
-        vals = xp.dot(B, self.weights) - self.norm
-        out[mask] = vals
-
-        return out[0] if scalar_input else out
-    
-    def pdf(self, x):
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
         xp = self.xp
-        lp = self.log_pdf(x)
-        return xp.exp(lp)
+        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+
+        s_grid = self._B_grid.dot(coeffs)
+        s_max = xp.max(s_grid)
+        
+        integrand = xp.exp(s_grid - s_max)
+        Z = xp.trapz(integrand, self._m_grid)
+
+        tiny = xp.finfo(self.dtype).tiny
+        return xp.log(Z + tiny) + s_max
+
+    def pdf(self, m):
+        """
+        Evaluate normalized probability density function at m.
+        """
+        xp = self.xp
+        s = self.eval_spline(m)
+        lZ = self.logZ()
+        return xp.exp(s - lZ)
+
+    def log_pdf(self, m):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        s = self.eval_spline(m)
+        lZ = self.logZ()
+        return s - lZ
 
     # ---------
     # Utilities
     # ---------
+    def basis(self, m):
+        """
+        Return basis evaluated at masses m (shape (len(m), n_basis)).
+        Handles log spacing automatically.
+        """
+        xp = get_module_array(m)
+        m = xp.asarray(m, dtype=self.dtype)
+        if self.spacing == "log":
+            x = xp.log(m)
+        else:
+            x = m
+        # bspline_basis expects x in basis-space and t (knot vector)
+        B = self.bspline_basis(x.ravel(), self.t, k=self.degree)
+        return B  # shape (len(m), n_basis)
+    
     def get_weights(self):
-        if self.weights is None:
+        # coefficients / weights (including boundary zeros)
+        if getattr(self, "coeffs", None) is None:
             return None
         try:
-            return self.weights.get()
+            return self.coeffs.get()   # cupy -> host
         except Exception:
-            return self.weights
+            return self.coeffs
 
     def get_knots(self):
-        if self.knots is None:
+        # knot vector (in basis space: x or log(m) depending on spacing)
+        if getattr(self, "t", None) is None:
             return None
         try:
-            return self.knots.get()
+            return self.t.get()
         except Exception:
-            return self.knots
+            return self.t
 
 
 class massprior_3PL_globmax(pm_prob):
