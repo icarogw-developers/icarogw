@@ -655,7 +655,7 @@ def chi_eff_from_spins(chi1, chi2, cos1, cos2, q):
     chi2: secondary spin magnitude
     cos1: cosine of the primary tilt angle
     cos2: cosine of the secondary tilt angle
-    q: mass ratio   \propto (m2/m1)
+    q: mass ratio propto (m2/m1)
     
     Returns
     -------
@@ -677,7 +677,7 @@ def chi_p_from_spins(chi1, chi2, cos1, cos2, q):
     chi2: secondary spin magnitude
     cos1: cosine of the primary tilt angle
     cos2: cosine of the secondary tilt angle
-    q: mass ratio   \propto (m2/m1)
+    q: mass ratio propto (m2/m1)
     
     Returns
     -------

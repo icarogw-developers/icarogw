@@ -153,7 +153,7 @@ class pm_prob(object):
 class massratio_PowerlawSmooth(object):
     '''
     Conditional mass-ratio distribution
-    p(q | m1) \propto q^{alpha_q}
+    p(q | m1) propto q^{alpha_q}
     for q in [mmin / m1, 1], with smoothing in m2 = q m1
     '''
     def __init__(self, mw):
