@@ -398,8 +398,8 @@ class galaxy_MF(object):
         Parameters
         ----------
         band: string
-            W1, K or bJ band. Others are not implemented
-        Mmin, Mmax,Mstar,alpha,phistar: float
+            W1-glade+, K-glade+, bJ-glade+, g-upglade, r-upglade or W1-upglade band. Others are not implemented
+        Mmin, Mmax,Mstar,alpha,phistar,Q,P and z0: float
             Minimum, maximum absolute magnitude. Knee-absolute magnitude (for h=1), Powerlaw factor and galaxy number density per Gpc-3 
         LLstarcut: float
             L/L* where to cut the Schecter function, must be brighter than faint end
@@ -420,15 +420,28 @@ class galaxy_MF(object):
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.0, -17.0, -20.64, -1.09, 1.43e-2*1e9, 0., 0., 0.1
             elif band=='W1-upglade':
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -26.0, -20.0, -23.80, -1.14, 0.86e-2*1e9, 0., 0., 0.1
+            elif band=='j-euclid':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.0, -19, -22.62, -1.27, 4.62e-03*1e9, 0., 0., 0.1
+            elif band=='h-euclid':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self. Q, self.P, self.z0 = -24.0, -19, -22.98, -1.22, 4.63e-03*1e9, 0., 0., 0.1
+            elif band=='y-euclid':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.0, -19,-22.35, -1.34, 4.39e-03*1e9, 0., 0., 0.1
+            elif band=='vis-euclid':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.0, -18., -21.84, -1.73, 1.89e-03*1e9, 0., 0., 0.1
+            elif band=='vis-q1-euclid':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.0, -18, -21.35, -1.34,1.05e-02*1e9, 0., 0., 0.1
+            elif band=='r-DES':
+                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.29, -16.33, -20.9, -1.01, 1.17e-02*1e9, 0., 0., 0.1
             else:
                 raise ValueError('Band not known')
-
+                
         if LLstarcut is not None:
             Mmax_try = self.Mstar-2.5*np.log10(LLstarcut)
             if Mmax_try>self.Mmax:
                 raise ValueError('The maximum L/L* cut you can apply is {:.3f} L/L*'.format(10**((self.Mstar-self.Mmax)/2.5)))
             self.Mmax = Mmax_try
-                
+            
+
     def build_MF(self,cosmology):
         '''
         Build the Magnitude function
@@ -598,32 +611,42 @@ class galaxy_MF(object):
             self.effective_density_interpolant_gpu=np2cp(self.effective_density_interpolant[::-1])
             self.xvector_interpolant_gpu=np2cp(self.Mstar-Mvector_interpolant[::-1])
         
-    def background_effective_galaxy_density(self,Mthr,z):
-        '''Returns the effective galaxy density, i.e. dN_{gal,eff}/dVc, the effective number is given by the luminosity weights.
-        This is Eq. 2.37 on the Overleaf documentation
-        
-        Parameters
-        ----------
-        Mthr: xp.array
-            Absolute magnitude threshold (faint) used to compute the integral
-        '''
-        
-        origin=Mthr.shape
-        xp = get_module_array(Mthr)
-        phis, Mstarobs = self.get_evol_phi_Mstar(z)
-        ravelled = xp.ravel(Mstarobs-Mthr)
-        # Schecter function is 0 outside intervals that's why we set limit on boundaries
-        
-        if iscupy(Mthr):
-            xvector_interpolant=self.xvector_interpolant_gpu
-            effective_density_interpolant=self.effective_density_interpolant_gpu
-        else:
-            xvector_interpolant=self.xvector_interpolant_cpu
-            effective_density_interpolant=self.effective_density_interpolant_cpu
+    def background_effective_galaxy_density(self, Mthr, z, Msat=None):
+            '''
+            Returns the effective galaxy density dN_{gal,eff}/dVc.
             
-        outp=phis*xp.interp(ravelled,xvector_interpolant,effective_density_interpolant
-                           ,left=effective_density_interpolant[0],right=effective_density_interpolant[-1])
-        return xp.reshape(outp,origin)
+            Parameters
+            ----------
+            Mthr: xp.array
+                Absolute magnitude threshold (faint limit).
+            Msat: float or xp.array, optional
+                Saturation magnitude (bright limit). If None, integrates from -infinity.
+            '''
+            origin = Mthr.shape
+            xp = get_module_array(Mthr)
+            phis, Mstarobs = self.get_evol_phi_Mstar(z)
+
+            if iscupy(Mthr):
+                x_int = self.xvector_interpolant_gpu
+                eff_int = self.effective_density_interpolant_gpu
+            else:
+                x_int = self.xvector_interpolant_cpu
+                eff_int = self.effective_density_interpolant_cpu
+
+            x_thr = xp.ravel(Mstarobs - Mthr)
+            n_thr = xp.interp(x_thr, x_int, eff_int, left=eff_int[0], right=eff_int[-1])
+
+            
+            if Msat is not None and xp.any(Msat < Mthr):
+                x_sat = xp.ravel(Mstarobs- Msat)
+                n_sat = eff_int[-1]-xp.interp(x_sat, x_int, eff_int, left=eff_int[0], right=eff_int[-1])
+                outp = phis * (n_thr+n_sat)
+            else:
+                outp = phis * n_thr
+
+            return xp.reshape(outp, origin)
+
+
 
 
 
@@ -749,6 +772,7 @@ class log_powerlaw_absM_rate(basic_absM_rate):
         toret= self.epsilon*0.4*(sch.Mstarobs-M)*xp.log(10)
         # Note Galaxies fainter than the Schechter limit are assumed to have CBC rate 0.
         # Note Galaxies brighter are kept even if incosistent with Schechter limit 
-        toret[(M>sch.Mmaxobs)]=-xp.inf
+        #toret[(M>sch.Mmaxobs)]=-xp.inf
+        toret[(M < sch.Mminobs) | (M > sch.Mmaxobs)] = -xp.inf
         return toret
 
