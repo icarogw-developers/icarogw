@@ -1163,7 +1163,7 @@ class CBC_HI_vanilla_rate(object):
     Parameters
     ----------
     HI_map: class
-        HI_map class already processed to caclulate selection biases from the neutral hydrogen map.
+        HI_map class already processed to calculate selection biases from the neutral hydrogen map.
     cosmology_wrapper: class
         Wrapper for the cosmological model
     rate_wrapper: class
@@ -1200,6 +1200,7 @@ class CBC_HI_vanilla_rate(object):
         '''
         self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
         self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
+        self.HI_map.update(**{key: kwargs[key] for key in self.HI_map.population_parameters})
         
         if not self.scale_free:        
             self.RHI = kwargs['RHI']
@@ -1229,7 +1230,7 @@ class CBC_HI_vanilla_rate(object):
             for i in range(len(self.HI.list_PE_averaged_density)):
                 rho_HI[i,:] = self.list_PE_averaged_density[i](z[i,:])
                 
-        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z))
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         
         # The Jacobian here only comes from the dl -> z conversion. There is no mass as we are working with toy models.
         # TO-DO Double check rate parametrization
@@ -1239,7 +1240,7 @@ class CBC_HI_vanilla_rate(object):
         #print('negative redshift', z[rho_HI < 0])
         #log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + xp.log(rho_HI) +\
         #-xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
-        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + rho_HI +\
+        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + xp.log(rho_HI) +\
         -xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
             
         if not self.scale_free:
@@ -1267,13 +1268,13 @@ class CBC_HI_vanilla_rate(object):
         # The injections are calulated with average True
         rho_HI = self.HI_map.drho_dzdomega(z,kwargs['sky_indices'],self.cw.cosmology,
                                            dl=kwargs['luminosity_distance'],average=True)
-        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z))
+        log_dVc_dz=xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         
         # The Jacobian here only comes from the dl -> z conversion. There is no mass as we are working with toy models.
         # TO-DO Double check rate parametrization
         #log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +xp.log(rho_HI) \
         #-xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
-        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz +rho_HI +\
+        log_weights=self.rw.rate.log_evaluate(z)+ log_dVc_dz + xp.log(rho_HI) +\
         -xp.log1p(z)-xp.log(xp.abs(self.cw.cosmology.ddl_by_dz_at_z(z)))-xp.log(prior)
 
 
