@@ -723,8 +723,9 @@ class  icarogw_catalog(object):
         self.sky_grid = np.arange(0,len(self.moc_mthr_map.data),1).astype(int)
 
         # Sky averaged in-catalog part
-        self.dNgal_dzdOm_vals_av = np.mean(self.dNgal_dzdOm_vals,axis=1)
-        self.bg_vals_av = np.mean(self.bg_vals,axis=1)
+        sr_areas = self.moc_mthr_map.pixarea(self.sky_grid).value
+        self.dNgal_dzdOm_vals_av = np.mean(self.dNgal_dzdOm_vals*sr_areas,axis=1)/sr_areas.sum()
+        self.bg_vals_av = np.mean(self.bg_vals*sr_areas,axis=1)/sr_areas.sum()
         # Deleting as this is not necessary
         del self.bg_vals
 
