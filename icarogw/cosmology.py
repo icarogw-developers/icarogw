@@ -418,23 +418,19 @@ class galaxy_MF(object):
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -26.0, -20.0, -23.80, -1.14, 0.86e-2*1e9, 0., 0., 0.1
             
             # For MICE MDC. Source: Blanton et al. 2003 (ApJ 592, 819)
-            # Magnitudes have to include evolution, but in the MICEcat documentation, intrinsic magnitude Mr <-18.9 do not include evolution.
-            # This `evol` term is meant to include it.
-            evol = 5.0 * np.log10(cosmology.little_h)
-            
             elif (band=='u-mice'):
-                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -21.93-evol, -18.89-evol, -17.93, -0.92, 3.05e-2*1e9, 0., 0., 0.1
+                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -21.93, -18.89, -17.93, -0.92, 3.05e-2*1e9, 0., 0., 0.1
             elif (band=='g-mice'):
-                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -23.38-evol, -18.89-evol, -19.39, -0.89, 2.18e-2*1e9, 0., 0., 0.1
+                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -23.38, -18.89, -19.39, -0.89, 2.18e-2*1e9, 0., 0., 0.1
             elif (band=='r-mice'):
-                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.26-evol, -18.89-evol, -20.44, -1.05, 1.49e-2*1e9, 0., 0., 0.1
+                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.26, -18.89, -20.44, -1.05, 1.49e-2*1e9, 0., 0., 0.1
             elif (band=='i-mice'):
-                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -23.84-evol, -18.89-evol, -20.82, -1.00, 1.47e-2*1e9, 0., 0., 0.1
+                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -23.84, -18.89, -20.82, -1.00, 1.47e-2*1e9, 0., 0., 0.1
             elif (band=='z-mice'):
-                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.08-evol, -18.89-evol, -21.18, -1.08, 1.35e-2*1e9, 0., 0., 0.1
+                self.Mmin,self.Mmax, self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.z0 = -24.08, -18.89, -21.18, -1.08, 1.35e-2*1e9, 0., 0., 0.1
             else:
                 raise ValueError('Band not known')
-                
+
     def build_MF(self,cosmology):
         '''
         Build the Magnitude function
