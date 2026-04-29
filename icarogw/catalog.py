@@ -183,7 +183,8 @@ def remove_nans_pixelated_files(outfolder,pixel,fields_to_take,grouping):
 def calculate_mthr_pixelated_files(outfolder,
                                    pixel,
                                    apparent_magnitude_flag,grouping,nside_mthr,
-                                   mthr_percentile=50):
+                                   mthr_percentile=50, 
+                                   filled_pixel_file='filled_pixels.txt'):
     '''
     The function calculates the apparent magnitude threshold for each pixelated file
 
@@ -203,7 +204,7 @@ def calculate_mthr_pixelated_files(outfolder,
         Percentage used to define the apperent magnitude threhosld
     '''
     
-    filled_pixels = np.genfromtxt(os.path.join(outfolder,'filled_pixels.txt')).astype(int)
+    filled_pixels = np.genfromtxt(os.path.join(outfolder, filled_pixel_file)).astype(int)
     with h5py.File(os.path.join(outfolder,'pixel_{:d}.hdf5'.format(pixel)),'r+') as cat:
         subcat = cat[grouping]
         subcat.attrs['apparent_magnitude_flag']=apparent_magnitude_flag
@@ -371,7 +372,7 @@ def get_redshift_grid_for_files(outfolder,pixel,grouping,cosmo_ref,
 
 
 #LVK reviewed
-def initialize_icarogw_catalog(outfolder,outfile,grouping):
+def initialize_icarogw_catalog(outfolder,outfile,grouping, filled_pixel_file='filled_pixels.txt'):
     '''
     Iintialize the grouping of the icarogw catalog
 
@@ -385,7 +386,7 @@ def initialize_icarogw_catalog(outfolder,outfile,grouping):
         How the new group should be called
     '''
 
-    filled_pixels = np.genfromtxt(os.path.join(outfolder,'filled_pixels.txt')).astype(int)
+    filled_pixels = np.genfromtxt(os.path.join(outfolder, filled_pixel_file)).astype(int)
 
     with h5py.File(os.path.join(outfolder,'pixel_{:d}.hdf5'.format(filled_pixels[0])),'r') as tmpcat:
         Nintegration = tmpcat[grouping].attrs['Nintegration']
