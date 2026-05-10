@@ -400,18 +400,21 @@ class w0waOEFT_astropycosmology(astropycosmology):
         '''
         
         super().build_cosmology(astropy_cosmo)
-        dlem = np.power(10.,self.log10_dl_at_z_cpu)
-        dlbydz_em = np.power(10.,self.log10_ddl_by_dz_cpu)
+        log10_dlem = self.log10_dl_at_z_cpu
+        dlem = np.power(10., log10_dlem)
+        dlbydz_em = np.power(10., self.log10_ddl_by_dz_cpu)
 
-        a_term = (1 + self.z_cpu)**(3*(w0 + wa))
-        b_term = 3 * wa * self.z_cpu / (1 + self.z_cpu)
-        self.log10_dl_at_z_cpu = - (Om0 / (4 * (Om0 - 1))) * np.log10(Om0 + a_term * (1 - Om0) * np.exp(- b_term))
+        alpha = Om0 / (4.0 * (1.0 - Om0))
+        A = np.power(1.0 + self.z_cpu, 3.0 * (w0 + wa))
+        B = 3.0 * wa * self.z_cpu / (1.0 + self.z_cpu)
+        C = Om0 + (1 - Om0) * A * np.exp(- B)
+        log10_ratio = alpha * np.log10(C)
+        
+        self.log10_dl_at_z_cpu = log10_ratio + log10_dlem
 
-        c_term = Om0 * np.exp(b_term) + a_term * (1 - Om0)
-        dl_term = a_term * np.pow(c_term, Om0 / (4 * (Om0 - 1))) * Om0 * (b_term + 3*w0) / (4 * (1 + self.z_cpu))
-        ddL_term = np.pow(c_term, (5*Om0 - 4) / (4 * (Om0 - 1)))
+        dlem_prefactor = alpha * A * (3 * (w0 + wa) * (1.0 + self.z_cpu) - 3 * wa) / (np.power(1.0 + self.z_cpu, 2.0) * C)
 
-        self.log10_ddl_by_dz_cpu = np.log10((dl_term * dlem + ddL_term * dlbydz_em)) + (2 - 3*Om0) / (2 * (Om0 - 1)) * np.log10(c_term) + b_term * Om0 / (4 * (Om0 - 1) * np.log(10)) 
+        self.log10_ddl_by_dz_cpu = np.log10(dlem_prefactor * dlem + dlbydz_em) + log10_ratio
 
         if is_there_cupy():
             self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
