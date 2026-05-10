@@ -386,6 +386,36 @@ class alphalog_astropycosmology(astropycosmology):
             self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
             self.log10_ddl_by_dz_gpu=np2cp(self.log10_ddl_by_dz_cpu)
     
+class w0waOEFT_astropycosmology(astropycosmology):
+    def build_cosmology(self, astropy_cosmo, w0, wa, Om0):
+        '''
+        Construct the cosmology
+        
+        Parameters
+        ----------
+        astropy_cosmo: Astropy.cosmology class
+            initialize the cosmology up to zmax
+        w0, wa, Om0: float
+            See eqn. (6) and (8) of https://arxiv.org/pdf/2603.12321
+        '''
+        
+        super().build_cosmology(astropy_cosmo)
+        dlem = np.power(10.,self.log10_dl_at_z_cpu)
+        dlbydz_em = np.power(10.,self.log10_ddl_by_dz_cpu)
+
+        a_term = (1 + self.z_cpu)**(3*(w0 + wa))
+        b_term = 3 * wa * self.z_cpu / (1 + self.z_cpu)
+        self.log10_dl_at_z_cpu = - (Om0 / (4 * (Om0 - 1))) * np.log10(Om0 + a_term * (1 - Om0) * np.exp(- b_term))
+
+        c_term = Om0 * np.exp(b_term) + a_term * (1 - Om0)
+        dl_term = a_term * np.pow(c_term, Om0 / (4 * (Om0 - 1))) * Om0 * (b_term + 3*w0) / (4 * (1 + self.z_cpu))
+        ddL_term = np.pow(c_term, (5*Om0 - 4) / (4 * (Om0 - 1)))
+
+        self.log10_ddl_by_dz_cpu = np.log10((dl_term * dlem + ddL_term * dlbydz_em)) + (2 - 3*Om0) / (2 * (Om0 - 1)) * np.log10(c_term) + b_term * Om0 / (4 * (Om0 - 1) * np.log(10)) 
+
+        if is_there_cupy():
+            self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
+            self.log10_ddl_by_dz_gpu=np2cp(self.log10_ddl_by_dz_cpu)
 
 class galaxy_MF(object):
     def __init__(self,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None,Q = None, P = None, z0 = None):

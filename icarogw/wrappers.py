@@ -1,5 +1,5 @@
 from .cupy_pal import get_module_array, get_module_array_scipy, np, _set_xp_and_dtype
-from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
+from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology, w0waOEFT_astropycosmology
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
 from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
@@ -139,6 +139,16 @@ class alphalog_mod_wrap(object):
         self.bgwrap.update(**bgdict)
         self.cosmology.build_cosmology(self.bgwrap.astropycosmo(**bgdict),alphalog_1=kwargs['alphalog_1']
                                        ,alphalog_2=kwargs['alphalog_2'],alphalog_3=kwargs['alphalog_3'])
+
+class w0waOEFT_mod_wrap(object):
+    def __init__(self,bgwrap):
+        self.bgwrap=copy.deepcopy(bgwrap)
+        self.population_parameters=self.bgwrap.population_parameters
+        self.cosmology=w0waOEFT_astropycosmology(bgwrap.cosmology.zmax)
+    def update(self,**kwargs):
+        bgdict={key:kwargs[key] for key in self.bgwrap.population_parameters}
+        self.bgwrap.update(**bgdict)
+        self.cosmology.build_cosmology(self.bgwrap.astropycosmo(**bgdict), w0=kwargs["w0"], wa=kwargs["wa"], Om0=kwargs["Om0"])
 
 # A parent class for the standard 1D mass probabilities
 class pm_prob(object):
