@@ -2967,11 +2967,9 @@ class PowerLaw_LogSplineCoxDeBoor:
 
         coeff_keys = [f'c{i}' for i in range(1, self.n_basis - 2)]
         interior_coeffs = xp.asarray([kwargs.get(k, 0.0) for k in coeff_keys], dtype=self.dtype)
-        print(len(interior_coeffs))
         coeffs = xp.zeros(self.n_basis, dtype=self.dtype)
         coeffs[1:-2] = interior_coeffs
         coeffs[-2] = -xp.sum(interior_coeffs)
-        print(coeffs[-1])
         # coeffs_list = [0.0] + inc + [0.0]
         # coeffs = xp.asarray(coeffs_list, dtype=self.dtype)
         # interior_raw_coeffs = raw_coeffs[1:-1]
