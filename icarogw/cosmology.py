@@ -385,59 +385,7 @@ class alphalog_astropycosmology(astropycosmology):
         if is_there_cupy():
             self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
             self.log10_ddl_by_dz_gpu=np2cp(self.log10_ddl_by_dz_cpu)
-    
-class w0waOEFT_astropycosmology(astropycosmology):
-    def build_cosmology(self, astropy_cosmo, w0, wa, Om0):
-        '''
-        Construct the cosmology
-        
-        Parameters
-        ----------
-        astropy_cosmo: Astropy.cosmology class
-            initialize the cosmology up to zmax
-        w0, wa, Om0: float
-            See eqn. (6) and (8) of https://arxiv.org/pdf/2603.12321
-        '''
-        
-        super().build_cosmology(astropy_cosmo)
-        log10_dlem = self.log10_dl_at_z_cpu
-        # dlem = np.power(10., log10_dlem)
-        log10_dlbydz_em = self.log10_ddl_by_dz_cpu
-        # dlbydz_em = np.power(10., log10_dlbydz_em)
 
-        cst_log10 = np.log(10)
-
-        alpha = Om0 / (4.0 * (1.0 - Om0))
-        log10_zp1 = np.log1p(self.z_cpu) / cst_log10
-        zp1 = 1.0 + self.z_cpu
-        # A = np.power(1.0 + self.z_cpu, 3.0 * (w0 + wa))
-        log10_A = 3.0 * (w0 + wa) * log10_zp1
-        B = 3.0 * wa * self.z_cpu / zp1
-        # C = Om0 + (1 - Om0) * A * np.exp(- B)
-        log10_C = np.logaddexp(
-            np.log(Om0), 
-            np.log1p(-Om0) + cst_log10*log10_A - B
-        ) / cst_log10
-        # log10_ratio = alpha * np.log10(C)
-        log10_ratio = alpha * log10_C
-        
-        self.log10_dl_at_z_cpu = log10_ratio + log10_dlem
-
-        # dlem_prefactor = alpha * A * (3 * (w0 + wa) * (1.0 + self.z_cpu) - 3 * wa) / (np.power(1.0 + self.z_cpu, 2.0) * C)
-        log10_dlem_prefactor = (
-            np.log10(alpha)
-            + log10_A
-            + np.logaddexp(np.log(3) + np.log(w0 + wa) + cst_log10*log10_zp1, np.log(- 3 * wa))
-            - 2 * log10_zp1
-            - log10_C
-        )
-
-        # self.log10_ddl_by_dz_cpu = np.log10(dlem_prefactor * dlem + dlbydz_em) + log10_ratio
-        self.log10_ddl_by_dz_cpu = np.logaddexp(cst_log10 * (log10_dlem_prefactor + log10_dlem), log10_dlbydz_em) + log10_ratio
-
-        if is_there_cupy():
-            self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
-            self.log10_ddl_by_dz_gpu=np2cp(self.log10_ddl_by_dz_cpu)
 
 class galaxy_MF(object):
     def __init__(self,band=None,Mmin=None,Mmax=None,Mstar=None,alpha=None,phistar=None,Q = None, P = None, z0 = None):

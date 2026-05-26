@@ -139,16 +139,7 @@ class alphalog_mod_wrap(object):
         self.bgwrap.update(**bgdict)
         self.cosmology.build_cosmology(self.bgwrap.astropycosmo(**bgdict),alphalog_1=kwargs['alphalog_1']
                                        ,alphalog_2=kwargs['alphalog_2'],alphalog_3=kwargs['alphalog_3'])
-
-class w0waOEFT_mod_wrap(object):
-    def __init__(self,bgwrap):
-        self.bgwrap=copy.deepcopy(bgwrap)
-        self.population_parameters=self.bgwrap.population_parameters
-        self.cosmology=w0waOEFT_astropycosmology(bgwrap.cosmology.zmax)
-    def update(self,**kwargs):
-        bgdict={key:kwargs[key] for key in self.bgwrap.population_parameters}
-        self.bgwrap.update(**bgdict)
-        self.cosmology.build_cosmology(self.bgwrap.astropycosmo(**bgdict), w0=kwargs["w0"], wa=kwargs["wa"], Om0=kwargs["Om0"])
+        
 
 # A parent class for the standard 1D mass probabilities
 class pm_prob(object):
