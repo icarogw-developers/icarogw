@@ -2805,6 +2805,246 @@ class LogSplineCoxDeBoor:
             return self.t
 
 
+class PowerLaw_LogSplineCoxDeBoor:
+    """
+    B-spline model of log(pdf) for arbitrary degree using the Cox-De Boor algorithm.
+    The spline is defined by n_basis basis functions of given degree over [mmin, mmax],
+    with either uniform or logarithmic knot spacing. Each basis has an associated coefficient
+    that defines the log(pdf) as a linear combination of the basis functions.
+
+    The normalization is computed numerically by evaluating the spline on a grid.
+    The implementation is vectorised and GPU-compatible.
+
+    Behaviour:
+    - Interior coefficients are used exactly as provided (no mean subtraction).
+    - First and last coefficients remain fixed to zero. This fixes the gauge invariance from adding
+      a global constant to all coefficients.
+    - Coefficients can be negative as the log(pdf), but still ensuring that the pdf is always positive.
+    """
+
+    def __init__(self, n_basis: int = 6, degree: int = 2, spacing: str = "log", powerlaw: bool = False, smoothing: bool = False):
+        # n_basis is the number of interior basis functions supplied by the user;
+        # total basis count = interior + 2 (first and last fixed)
+        self.n_basis = int(n_basis) + 2
+        self.degree = int(degree)
+        self.spacing = spacing
+        self.flag_powerlaw = powerlaw
+        self.flag_smoothing = self.flag_powerlaw and smoothing
+
+        if spacing not in ("uniform", "log"):
+            raise ValueError("spacing must be 'uniform' or 'log'")
+        
+        self.coeffs_keys = [f'c{i}' for i in range(1, self.n_basis-2)]
+        self.population_parameters = (
+            ['mmin', 'mmax'] + 
+            self.coeffs_keys + 
+            ["alpha"]*self.flag_powerlaw +
+            ["delta_m"]*self.flag_smoothing
+        )
+
+        # Backend (numpy or cupy) and dtype (float32 on GPU by default)
+        self.xp, self.dtype = _set_xp_and_dtype()
+
+    def bspline_basis(self, x, t, k = 3):
+        """
+        Compute B-spline basis functions using Cox-de Boor recursion.
+        """
+        xp = self.xp
+        x = xp.asarray(x, dtype=self.dtype)
+        t = xp.asarray(t, dtype=self.dtype)
+        n_basis = len(t) - k - 1
+        n_points = len(x)
+
+        # Zeroth-degree basis
+        B = xp.zeros((n_points, n_basis), dtype=x.dtype)
+        for i in range(n_basis):
+            B[:, i] = xp.where((x >= t[i]) & (x < t[i + 1]), 1.0, 0.0)
+        if x.size and t.size:
+            B[x == t[-1], -1] = 1.0
+
+        # Cox-de Boor recursion
+        for d in range(1, k + 1):
+            t_i = t[:n_basis]
+            t_id = t[d:n_basis + d]
+            t_ip1 = t[1:n_basis + 1]
+            t_ip1d1 = t[d + 1:n_basis + d + 1]
+
+            denom1 = xp.where(t_id - t_i > 0, t_id - t_i, 1.0)
+            denom2 = xp.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
+
+            term1 = ((x[:, None] - t_i[None, :]) / denom1[None, :]) * B
+            term1 = xp.where(denom1[None, :] > 0, term1, 0.0)
+
+            term2 = xp.zeros_like(B)
+            if n_basis > 1:
+                term2[:, :-1] = ((t_ip1d1[None, :-1] - x[:, None]) / denom2[None, :-1]) * B[:, 1:]
+                term2 = xp.where(denom2[None, :] > 0, term2, 0.0)
+
+            B = term1 + term2
+
+        return B
+    
+    def log_smoothing(self, m):
+        xp = self.xp
+        m = xp.asarray(m, dtype=self.dtype)
+        out = xp.zeros_like(m)
+
+        # above transition: log(1) = 0
+        high = m >= (self.mmin + self.delta_m)
+        out[high] = 0.0
+
+        # below hard cutoff: log(0) = -inf
+        low = m <= self.mmin
+        out[low] = -xp.inf
+
+        # transition region
+        mid = (m > self.mmin) & (m < self.mmin + self.delta_m)
+
+        if xp.any(mid):
+            x = m[mid]
+            A = (self.delta_m/(x - self.mmin) + self.delta_m/(x - self.mmin - self.delta_m))
+            # log S = -softplus(A)
+            out[mid] = -xp.log1p(xp.exp(A))  # stable softplus form
+
+        return out
+
+    def log_powerlaw(self, m):
+        xp = self.xp
+        m = xp.asarray(m, dtype=self.dtype)
+        high = m >= self.mmax
+        res = - self.alpha * xp.log(m)
+        res[high] = -xp.inf
+        if self.flag_smoothing:
+            res += self.log_smoothing(m)
+        else:
+            low = m <= self.mmin
+            res[low] = -xp.inf
+        return res
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        xp = self.xp
+        spacing = self.spacing
+        k = self.degree
+        n = self.n_basis
+
+        if spacing == "log":
+            self.xmin, self.xmax = xp.log(self.mmin), xp.log(self.mmax)
+            from_x = xp.exp
+        else:  # uniform
+            self.xmin, self.xmax = self.mmin, self.mmax
+            from_x = lambda x: x
+
+        # Number of interior knot *locations*
+        # This guarantees: len(t) = n + k + 1
+        interior = xp.linspace(
+            self.xmin,
+            self.xmax,
+            n - k + 1,
+            dtype=self.dtype
+        )
+        t_start, t_end = xp.repeat(interior[0], k + 1), xp.repeat(interior[-1], k + 1)
+        self.t = xp.concatenate([t_start, interior[1:-1], t_end]) # Clamped knot vector
+
+        self._x_grid = xp.linspace(self.xmin, self.xmax, 1000, dtype=self.dtype)
+        self._m_grid = from_x(self._x_grid)
+        self._B_grid = self.bspline_basis(self._x_grid, self.t, k=k)
+
+    def update(self, **kwargs):
+        """
+        Update spline parameters and coefficients.
+        """
+        xp = self.xp
+        self.mmin, self.mmax = kwargs['mmin'], kwargs['mmax']
+        if self.flag_powerlaw:
+            self.alpha = kwargs['alpha']
+            if self.flag_smoothing: 
+                self.delta_m = kwargs['delta_m']
+        self._setup_grid_and_knots()
+
+        coeff_keys = [f'c{i}' for i in range(1, self.n_basis - 2)]
+        interior_coeffs = xp.asarray([kwargs.get(k, 0.0) for k in coeff_keys], dtype=self.dtype)
+        print(len(interior_coeffs))
+        coeffs = xp.zeros(self.n_basis, dtype=self.dtype)
+        coeffs[1:-2] = interior_coeffs
+        coeffs[-2] = -xp.sum(interior_coeffs)
+        print(coeffs[-1])
+        # coeffs_list = [0.0] + inc + [0.0]
+        # coeffs = xp.asarray(coeffs_list, dtype=self.dtype)
+        # interior_raw_coeffs = raw_coeffs[1:-1]
+        # interior_coeffs = interior_raw_coeffs - xp.mean(interior_raw_coeffs)
+        
+        self.coeffs = coeffs
+
+    def eval_spline(self, m):
+        """
+        Evaluate the spline at mass m.
+        """
+        xp = self.xp
+        m = xp.asarray(m, dtype=self.dtype)
+        if self.spacing == "log": x = xp.log(m)
+        else:                     x = m
+        B = self.bspline_basis(x.ravel(), self.t, k=self.degree)
+        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+        s_flat = B.dot(coeffs)
+        return s_flat.reshape(x.shape)
+    
+    def eval_log_unnorm_pdf(self, m):
+        """
+        Evaluate the unnormalised model at mass m.
+        """
+        xp = self.xp
+        m = xp.asarray(m, dtype=self.dtype)
+        if self.spacing == "log": x = xp.log(m)
+        else:                     x = m
+
+        B = self.bspline_basis(x.ravel(), self.t, k=self.degree)
+        res = B.dot(self.coeffs).reshape(m.shape)
+
+        if self.flag_powerlaw:
+            res += self.log_powerlaw(m)
+
+        return res
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        xp = self.xp
+        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+
+        log_integrand = self._B_grid.dot(coeffs)
+        if self.flag_powerlaw: log_integrand += self.log_powerlaw(self._m_grid)
+
+        s_max = xp.max(log_integrand)
+        integrand = xp.exp(log_integrand - s_max)
+        Z = xp.trapz(integrand, self._m_grid)
+
+        tiny = xp.finfo(self.dtype).tiny
+        return xp.log(Z + tiny) + s_max
+
+    def pdf(self, m):
+        """
+        Evaluate normalized probability density function at m.
+        """
+        xp = self.xp
+        s = self.eval_log_unnorm_pdf(m)
+        lZ = self.logZ()
+        return xp.exp(s - lZ)
+
+    def log_pdf(self, m):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        s = self.eval_log_unnorm_pdf(m)
+        lZ = self.logZ()
+        return s - lZ
+
+
+
 class massprior_3PL_globmax(pm_prob):
     """
     3 Power-Laws model with a global mmax parameter shared by all PL components.
