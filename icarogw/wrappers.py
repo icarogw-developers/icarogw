@@ -6,6 +6,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw, PowerLaw2Gaussians_AnalyticalNorm
+from .priors import PowerLaw_logBspline, logBspline
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -2805,6 +2806,44 @@ class LogSplineCoxDeBoor:
             return self.t
 
 
+class massprior_logBspline(pm_prob):
+    def __init__(self, n_basis, degree, spacing):
+        self.n_basis, self.degree, self.spacing = n_basis, degree, spacing
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
+        self.prior = logBspline(
+            minval=kwargs['mmin'],
+            maxval=kwargs['mmax'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            spacing=self.spacing,
+            **coeffs
+        )
+
+
+class massprior_PowerLawlogBspline(pm_prob):
+    def __init__(self, n_basis, degree, spacing):
+        self.n_basis, self.degree, self.spacing = n_basis, degree, spacing
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
+        self.prior = PowerLaw_logBspline(
+            minval = kwargs['mmin'],
+            maxval = kwargs['mmax'],
+            alpha  = - kwargs['alpha'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            spacing=self.spacing,
+            **coeffs
+        )
+
+
+
 class PowerLaw_LogSplineCoxDeBoor:
     """
     B-spline model of log(pdf) for arbitrary degree using the Cox-De Boor algorithm.
@@ -2834,7 +2873,7 @@ class PowerLaw_LogSplineCoxDeBoor:
         if spacing not in ("uniform", "log"):
             raise ValueError("spacing must be 'uniform' or 'log'")
         
-        self.coeffs_keys = [f'c{i}' for i in range(1, self.n_basis-2)]
+        self.coeffs_keys = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.population_parameters = (
             ['mmin', 'mmax'] + 
             self.coeffs_keys + 
@@ -2965,31 +3004,14 @@ class PowerLaw_LogSplineCoxDeBoor:
                 self.delta_m = kwargs['delta_m']
         self._setup_grid_and_knots()
 
-        coeff_keys = [f'c{i}' for i in range(1, self.n_basis - 2)]
+        coeff_keys = [f'c{i}' for i in range(1, self.n_basis - 1)]
         interior_coeffs = xp.asarray([kwargs.get(k, 0.0) for k in coeff_keys], dtype=self.dtype)
         coeffs = xp.zeros(self.n_basis, dtype=self.dtype)
-        coeffs[1:-2] = interior_coeffs
-        coeffs[-2] = -xp.sum(interior_coeffs)
-        # coeffs_list = [0.0] + inc + [0.0]
-        # coeffs = xp.asarray(coeffs_list, dtype=self.dtype)
-        # interior_raw_coeffs = raw_coeffs[1:-1]
-        # interior_coeffs = interior_raw_coeffs - xp.mean(interior_raw_coeffs)
-        
+        coeffs[1:-1] = interior_coeffs
+        # coeffs[-2] = -xp.sum(interior_coeffs)
+
         self.coeffs = coeffs
 
-    def eval_spline(self, m):
-        """
-        Evaluate the spline at mass m.
-        """
-        xp = self.xp
-        m = xp.asarray(m, dtype=self.dtype)
-        if self.spacing == "log": x = xp.log(m)
-        else:                     x = m
-        B = self.bspline_basis(x.ravel(), self.t, k=self.degree)
-        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
-        s_flat = B.dot(coeffs)
-        return s_flat.reshape(x.shape)
-    
     def eval_log_unnorm_pdf(self, m):
         """
         Evaluate the unnormalised model at mass m.

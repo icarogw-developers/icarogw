@@ -1,4 +1,4 @@
-from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, check_bounds_1D, check_bounds_2D
+from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, iscupy, np, sn, check_bounds_1D, check_bounds_2D, _set_xp_and_dtype
 from .conversions import L2M, M2L
 import copy
 
@@ -2044,6 +2044,171 @@ class QuadruplePowerLaw(basic_1dimpdf):
         log_pl_d = self.powerlaw_class_d.log_cdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
         return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
 
+
+class logBspline(basic_1dimpdf):
+
+    def __init__(self, minval, maxval, n_basis:int, degree:int, spacing:str, **coeffs):
+        super().__init__(minval, maxval)
+        _, self.dtype = _set_xp_and_dtype()
+        
+        self.degree = degree
+        self.n_basis = n_basis
+        self.spacing = spacing
+
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0], dtype=self.dtype)
+
+        self._setup_grid_and_knots()
+
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        # xp = self.xp
+        spacing = self.spacing
+        k = self.degree
+        n = self.n_basis
+
+        if spacing == "log":
+            self.ymin, self.ymax = np.log(self.minval), np.log(self.maxval)
+            from_y = np.exp
+        else:  # uniform
+            self.ymin, self.ymax = self.minval, self.maxval
+            from_y = lambda y: y
+
+        # Number of interior knot *locations*
+        # This guarantees: len(t) = n + k + 1
+        interior = np.linspace(
+            self.ymin,
+            self.ymax,
+            n - k + 1,
+            dtype=self.dtype
+        )
+        t_start, t_end = np.repeat(interior[0], k + 1), np.repeat(interior[-1], k + 1)
+        self.t = np.concatenate([t_start, interior[1:-1], t_end]) # Clamped knot vector
+
+        self._y_grid = np.linspace(self.ymin, self.ymax, 1000, dtype=self.dtype)
+        self._x_grid = from_y(self._y_grid)
+        self._B_grid = self.bspline_basis(self._y_grid)
+
+    def bspline_basis(self, y):#, t, k = 3):
+        """
+        Compute B-spline basis functions using Cox-de Boor recursion.
+        """
+        # xp = self.xp
+        y = np.asarray(y, dtype=self.dtype)
+        n_points = len(y)
+
+        # Zeroth-degree basis
+        B = np.zeros((n_points, self.n_basis), dtype=y.dtype)
+        for i in range(self.n_basis):
+            B[:, i] = np.where((y >= self.t[i]) & (y < self.t[i + 1]), 1.0, 0.0)
+        if y.size and self.t.size:
+            B[y == self.t[-1], -1] = 1.0
+
+        # Cox-de Boor recursion
+        for d in range(1, self.degree + 1):
+            t_i = self.t[:self.n_basis]
+            t_id = self.t[d:self.n_basis + d]
+            t_ip1 = self.t[1:self.n_basis + 1]
+            t_ip1d1 = self.t[d + 1:self.n_basis + d + 1]
+
+            denom1 = np.where(t_id - t_i > 0, t_id - t_i, 1.0)
+            denom2 = np.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
+
+            term1 = ((y[:, None] - t_i[None, :]) / denom1[None, :]) * B
+            term1 = np.where(denom1[None, :] > 0, term1, 0.0)
+
+            term2 = np.zeros_like(B)
+            if self.n_basis > 1:
+                term2[:, :-1] = ((t_ip1d1[None, :-1] - y[:, None]) / denom2[None, :-1]) * B[:, 1:]
+                term2 = np.where(denom2[None, :] > 0, term2, 0.0)
+
+            B = term1 + term2
+
+        return B
+
+    def eval_spline(self, x):
+        """
+        Evaluate the spline at x.
+        """
+        # xp = self.xp
+        xp = get_module_array(x)
+        x = xp.asarray(x, dtype=self.dtype)
+        if self.spacing == "log": y = xp.log(x)
+        else:                     y = x
+        B = self.bspline_basis(y.ravel())
+        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+        s_flat = B.dot(coeffs)
+        return s_flat.reshape(y.shape)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        # xp = self.xp
+        s_grid = self._B_grid.dot(self.coeffs)
+        s_max = np.max(s_grid)
+        
+        integrand = np.exp(s_grid - s_max)
+        Z = np.trapz(integrand, self._x_grid)
+
+        tiny = np.finfo(self.dtype).tiny
+        return np.log(Z + tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        raise AttributeError("Bspline CDF not implemented yet.")
+
+
+class PowerLaw_logBspline(basic_1dimpdf):
+    def __init__(self, alpha, minval, maxval, n_basis:int, degree:int, spacing:str, **coeffs):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline(minval, maxval, n_basis, degree, spacing, **coeffs)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        # xp = self.xp
+        s_grid = self.component_spline._B_grid.dot(self.component_spline.coeffs)
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        # print(any(np.isnan(integrand)))
+        Z = np.trapz(integrand, self.component_spline._x_grid)
+        # print(Z)
+
+        tiny = np.finfo(self.component_spline.dtype).tiny
+        to_ret = np.log(Z + tiny) + tot_max
+        # print(np.isnan(to_ret))
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ() + 
+            + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+        )
+    
+    def _log_cdf(self, x):
+        raise AttributeError("Bspline CDF not implemented yet.")
 
 # =============================================================== #
 #            U N D E R   E X P E R I M E N T A T I O N            #
