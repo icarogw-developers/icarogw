@@ -5,7 +5,7 @@ from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, 
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
-from .priors import TriplePowerLaw, QuadruplePowerLaw, PowerLaw2Gaussians_AnalyticalNorm
+from .priors import TriplePowerLaw, QuadruplePowerLaw
 from .priors import logBspline, PowerLaw_logBspline
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
