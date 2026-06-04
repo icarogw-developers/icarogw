@@ -2104,11 +2104,9 @@ class logBspline(basic_1dimpdf):
         if self.spline_variable == 'lin':
             y = x
             t_local = t_local
-            print("LIN")
         elif self.spline_variable == 'log':
             y = xp.log(x)
             t_local = xp.log(t_local)
-            print("LOG")
 
         # Zeroth-degree basis
         B = xp.zeros((n_points, self.n_basis))
