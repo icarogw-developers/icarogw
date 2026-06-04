@@ -6,7 +6,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw, PowerLaw2Gaussians_AnalyticalNorm
-from .priors import PowerLaw_logBspline, logBspline
+from .priors import logBspline, PowerLaw_logBspline
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -2807,8 +2807,11 @@ class LogSplineCoxDeBoor:
 
 
 class massprior_logBspline(pm_prob):
-    def __init__(self, n_basis, degree, spacing):
-        self.n_basis, self.degree, self.spacing = n_basis, degree, spacing
+    def __init__(self, n_basis, degree, spacing, spline_variable):
+        self.n_basis = n_basis
+        self.degree = degree
+        self.spacing = spacing
+        self.spline_variable = spline_variable
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters
 
@@ -2820,13 +2823,17 @@ class massprior_logBspline(pm_prob):
             n_basis=self.n_basis, 
             degree=self.degree, 
             spacing=self.spacing,
+            spline_variable=self.spline_variable,
             **coeffs
         )
 
 
 class massprior_PowerLawlogBspline(pm_prob):
-    def __init__(self, n_basis, degree, spacing):
-        self.n_basis, self.degree, self.spacing = n_basis, degree, spacing
+    def __init__(self, n_basis, degree, spacing, spline_variable):
+        self.n_basis = n_basis
+        self.degree = degree
+        self.spacing = spacing
+        self.spline_variable = spline_variable
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
 
@@ -2839,9 +2846,9 @@ class massprior_PowerLawlogBspline(pm_prob):
             n_basis=self.n_basis, 
             degree=self.degree, 
             spacing=self.spacing,
+            spline_variable=self.spline_variable,
             **coeffs
         )
-
 
 
 class PowerLaw_LogSplineCoxDeBoor:

@@ -559,8 +559,8 @@ class LowpassSmoothedProb(basic_1dimpdf):
         
         # Find the values of the integrals in the region of the window function before and after the smoothing
         int_array = np.linspace(originprob.minval,originprob.minval+bottomsmooth,1000)
-        integral_before = np.trapz(self.origin_prob.pdf(int_array),int_array)
-        integral_now = np.trapz(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array)
+        integral_before = np.trapezoid(self.origin_prob.pdf(int_array),int_array)
+        integral_now = np.trapezoid(self.origin_prob.pdf(int_array)*_highpass_filter(int_array, self.bottom,self.bottom_smooth),int_array)
 
         self.integral_before = integral_before
         self.integral_now = integral_now
@@ -572,7 +572,7 @@ class LowpassSmoothedProb(basic_1dimpdf):
         
         self.x_eval_gpu = np2cp(self.x_eval_cpu)
         self.cdf_numeric_gpu = np2cp(self.cdf_numeric_cpu)
-        
+
     def _log_pdf(self,x):
         '''
         Evaluates the log_pdf
@@ -619,15 +619,24 @@ class LowpassSmoothedProb(basic_1dimpdf):
         ravelled=xp.ravel(x)
         
         toret = xp.ones_like(ravelled)
-        toret[ravelled<self.bottom] = 0.        
-        toret[(ravelled>=self.bottom) & (ravelled<=(self.bottom+self.bottom_smooth))] = xp.interp(ravelled[(ravelled>=self.bottom) & (ravelled<=(self.bottom+self.bottom_smooth))]
-                           ,(x_eval[:-1:]+x_eval[1::])*0.5,cdf_numeric)
+        toret[ravelled<self.bottom] = 0.
+
+        toret[(ravelled>=self.bottom) & (ravelled<=(self.bottom+self.bottom_smooth))] = xp.interp(
+            ravelled[(ravelled>=self.bottom) & (ravelled<=(self.bottom+self.bottom_smooth))],
+            (x_eval[:-1:]+x_eval[1::])*0.5,
+            cdf_numeric
+        )
         # The line below might contain some log 0, which is automatically accounted for in python
-        toret[ravelled>=(self.bottom+self.bottom_smooth)]=(self.integral_now+self.origin_prob.cdf(
-        ravelled[ravelled>=(self.bottom+self.bottom_smooth)])-self.origin_prob.cdf(xp.array([self.bottom+self.bottom_smooth])))/self.norm
+        toret[ravelled >= (self.bottom + self.bottom_smooth)] = (
+            self.integral_now + 
+            self.origin_prob.cdf(
+                ravelled[ravelled >= (self.bottom + self.bottom_smooth)]
+            ) - 
+            self.origin_prob.cdf(xp.array([self.bottom + self.bottom_smooth]))
+        ) / self.norm
         
         return xp.log(toret).reshape(origin)
-    
+
 class LowpassSmoothedProbEvolving(basic_1dimpdf):
     def __init__(self,originprob,bottomsmooth):
         '''
@@ -2047,18 +2056,17 @@ class QuadruplePowerLaw(basic_1dimpdf):
 
 class logBspline(basic_1dimpdf):
 
-    def __init__(self, minval, maxval, n_basis:int, degree:int, spacing:str, **coeffs):
+    def __init__(self, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
         super().__init__(minval, maxval)
-        _, self.dtype = _set_xp_and_dtype()
         
         self.degree = degree
         self.n_basis = n_basis
         self.spacing = spacing
+        self.spline_variable = spline_variable
 
-        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0], dtype=self.dtype)
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
 
         self._setup_grid_and_knots()
-
 
     def _setup_grid_and_knots(self):
         """
@@ -2071,59 +2079,61 @@ class logBspline(basic_1dimpdf):
         n = self.n_basis
 
         if spacing == "log":
-            self.ymin, self.ymax = np.log(self.minval), np.log(self.maxval)
-            from_y = np.exp
+            interior = np.logspace(np.log10(self.minval), np.log10(self.maxval), n - k + 1)
+            self._x_grid = np.logspace(np.log10(self.minval), np.log10(self.maxval), 1000)
         else:  # uniform
-            self.ymin, self.ymax = self.minval, self.maxval
-            from_y = lambda y: y
+            interior = np.linspace(self.minval, self.maxval, n - k + 1)
+            self._x_grid = np.linspace(self.minval, self.maxval, 1000)
 
         # Number of interior knot *locations*
         # This guarantees: len(t) = n + k + 1
-        interior = np.linspace(
-            self.ymin,
-            self.ymax,
-            n - k + 1,
-            dtype=self.dtype
-        )
         t_start, t_end = np.repeat(interior[0], k + 1), np.repeat(interior[-1], k + 1)
         self.t = np.concatenate([t_start, interior[1:-1], t_end]) # Clamped knot vector
 
-        self._y_grid = np.linspace(self.ymin, self.ymax, 1000, dtype=self.dtype)
-        self._x_grid = from_y(self._y_grid)
-        self._B_grid = self.bspline_basis(self._y_grid)
+        self._B_grid = self.bspline_basis(self._x_grid)
 
-    def bspline_basis(self, y):#, t, k = 3):
+    def bspline_basis(self, x):#, t, k = 3):
         """
         Compute B-spline basis functions using Cox-de Boor recursion.
         """
-        # xp = self.xp
-        y = np.asarray(y, dtype=self.dtype)
-        n_points = len(y)
+        xp = get_module_array(x)
+        n_points = len(x)
+        # Need to move the knots to y space as well
+        t_local = xp.asarray(self.t)
+
+        if self.spline_variable == 'lin':
+            y = x
+            t_local = t_local
+            print("LIN")
+        elif self.spline_variable == 'log':
+            y = xp.log(x)
+            t_local = xp.log(t_local)
+            print("LOG")
 
         # Zeroth-degree basis
-        B = np.zeros((n_points, self.n_basis), dtype=y.dtype)
+        B = xp.zeros((n_points, self.n_basis))
         for i in range(self.n_basis):
-            B[:, i] = np.where((y >= self.t[i]) & (y < self.t[i + 1]), 1.0, 0.0)
-        if y.size and self.t.size:
-            B[y == self.t[-1], -1] = 1.0
+            B[:, i] = xp.where((y >= t_local[i]) & (y < t_local[i + 1]), 1.0, 0.0)
+        if y.size and t_local.size:
+            B[y == t_local[-1], -1] = 1.0
 
         # Cox-de Boor recursion
         for d in range(1, self.degree + 1):
-            t_i = self.t[:self.n_basis]
-            t_id = self.t[d:self.n_basis + d]
-            t_ip1 = self.t[1:self.n_basis + 1]
-            t_ip1d1 = self.t[d + 1:self.n_basis + d + 1]
+            t_i = t_local[:self.n_basis]
+            t_id = t_local[d:self.n_basis + d]
+            t_ip1 = t_local[1:self.n_basis + 1]
+            t_ip1d1 = t_local[d + 1:self.n_basis + d + 1]
 
-            denom1 = np.where(t_id - t_i > 0, t_id - t_i, 1.0)
-            denom2 = np.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
+            denom1 = xp.where(t_id - t_i > 0, t_id - t_i, 1.0)
+            denom2 = xp.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
 
             term1 = ((y[:, None] - t_i[None, :]) / denom1[None, :]) * B
-            term1 = np.where(denom1[None, :] > 0, term1, 0.0)
+            term1 = xp.where(denom1[None, :] > 0, term1, 0.0)
 
-            term2 = np.zeros_like(B)
+            term2 = xp.zeros_like(B)
             if self.n_basis > 1:
                 term2[:, :-1] = ((t_ip1d1[None, :-1] - y[:, None]) / denom2[None, :-1]) * B[:, 1:]
-                term2 = np.where(denom2[None, :] > 0, term2, 0.0)
+                term2 = xp.where(denom2[None, :] > 0, term2, 0.0)
 
             B = term1 + term2
 
@@ -2133,29 +2143,24 @@ class logBspline(basic_1dimpdf):
         """
         Evaluate the spline at x.
         """
-        # xp = self.xp
         xp = get_module_array(x)
-        x = xp.asarray(x, dtype=self.dtype)
-        if self.spacing == "log": y = xp.log(x)
-        else:                     y = x
-        B = self.bspline_basis(y.ravel())
-        coeffs = xp.asarray(self.coeffs, dtype=self.dtype)
+        B = self.bspline_basis(x.ravel())
+        coeffs = xp.asarray(self.coeffs)
         s_flat = B.dot(coeffs)
-        return s_flat.reshape(y.shape)
+        return s_flat.reshape(x.shape)
 
     def logZ(self):
         """
         Compute log-normalization factor.
         """
-        # xp = self.xp
-        s_grid = self._B_grid.dot(self.coeffs)
+        coeffs = cp2np(self.coeffs)
+        s_grid = self._B_grid.dot(coeffs)
         s_max = np.max(s_grid)
         
         integrand = np.exp(s_grid - s_max)
-        Z = np.trapz(integrand, self._x_grid)
+        Z = np.trapezoid(integrand, self._x_grid)
 
-        tiny = np.finfo(self.dtype).tiny
-        return np.log(Z + tiny) + s_max
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
 
     def _log_pdf(self, x, normalize=True):
         """
@@ -2170,45 +2175,80 @@ class logBspline(basic_1dimpdf):
         """
         Evaluate log of normalized probability density function at m.
         """
-        raise AttributeError("Bspline CDF not implemented yet.")
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.interp(x, x_interp, y_interp)
 
 
 class PowerLaw_logBspline(basic_1dimpdf):
-    def __init__(self, alpha, minval, maxval, n_basis:int, degree:int, spacing:str, **coeffs):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
         super().__init__(minval, maxval)
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
-        self.component_spline = logBspline(minval, maxval, n_basis, degree, spacing, **coeffs)
+        self.component_spline = logBspline(minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs)
     
     def logZ(self):
         """
         Compute log-normalization factor.
         """
-        # xp = self.xp
-        s_grid = self.component_spline._B_grid.dot(self.component_spline.coeffs)
+        coeffs = cp2np(self.component_spline.coeffs)
+        # print("type(coeffs): ", type(coeffs))
+        # print("type(_B_grid): ", type(self.component_spline._B_grid))
+        s_grid = self.component_spline._B_grid.dot(coeffs)
+
         pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
         tot_grid = s_grid + pl_grid
         tot_max = np.max(tot_grid)
         
         integrand = np.exp(pl_grid + s_grid - tot_max)
-        # print(any(np.isnan(integrand)))
         Z = np.trapz(integrand, self.component_spline._x_grid)
-        # print(Z)
 
-        tiny = np.finfo(self.component_spline.dtype).tiny
-        to_ret = np.log(Z + tiny) + tot_max
-        # print(np.isnan(to_ret))
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
         return to_ret
 
     def _log_pdf(self, x):
         return (
             self.component_pl._log_pdf(x)
             + self.component_spline._log_pdf(x, normalize=False)
-            - self.logZ() + 
-            + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
         )
     
     def _log_cdf(self, x):
-        raise AttributeError("Bspline CDF not implemented yet.")
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.interp(x, x_interp, y_interp)
+
 
 # =============================================================== #
 #            U N D E R   E X P E R I M E N T A T I O N            #
