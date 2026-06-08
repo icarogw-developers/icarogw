@@ -2081,9 +2081,11 @@ class logBspline(basic_1dimpdf):
         if spacing == "log":
             interior = np.logspace(np.log10(self.minval), np.log10(self.maxval), n - k + 1)
             self._x_grid = np.logspace(np.log10(self.minval), np.log10(self.maxval), 1000)
-        else:  # uniform
+        elif spacing == "lin":
             interior = np.linspace(self.minval, self.maxval, n - k + 1)
             self._x_grid = np.linspace(self.minval, self.maxval, 1000)
+        else:
+            raise ValueError(f"Invalid '{spacing}' spacing option. Please choose from: log, lin.")
 
         # Number of interior knot *locations*
         # This guarantees: len(t) = n + k + 1
@@ -2107,6 +2109,8 @@ class logBspline(basic_1dimpdf):
         elif self.spline_variable == 'log':
             y = xp.log(x)
             t_local = xp.log(t_local)
+        else:
+            raise ValueError(f"Invalid '{self.spline_variable}' spline_variable option. Please choose from: log, lin.")
 
         # Zeroth-degree basis
         B = xp.zeros((n_points, self.n_basis))

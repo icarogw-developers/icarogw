@@ -226,38 +226,6 @@ class massprior_MultiPeak(pm_prob):
 #            U N D E R   E X P E R I M E N T A T I O N            #
 # =============================================================== #
 
-class massprior_MLTP_AnalyticalLowSmooth(pm_prob):
-    def __init__(self, flag_smoothing=False, smoothstep_order=0):
-        self.flag_smoothing = flag_smoothing
-        self.smoothstep_order = smoothstep_order
-        self.population_parameters = (
-            ['alpha','m1min','m1max','mu_g_low','sigma_g_low','lambda_g_low','mu_g_high','sigma_g_high','lambda_g'] + \
-            self.flag_smoothing * ['delta_m1'] + \
-            ['mmin', 'delta_m', 'mmax'] # dummy parameters
-        )
-    def update(self,**kwargs):
-        self.prior = PowerLaw2Gaussians_AnalyticalNorm(
-            kwargs['m1min'],
-            kwargs['m1max'],
-            -kwargs['alpha'],
-            kwargs['lambda_g'],
-            kwargs['lambda_g_low'],
-            kwargs['mu_g_low'],
-            kwargs['sigma_g_low'],
-            kwargs['m1min'],
-            kwargs['m1max'],
-            kwargs['mu_g_high'],
-            kwargs['sigma_g_high'],
-            kwargs['m1min'],
-            kwargs['m1max'],
-            smooth=self.flag_smoothing,
-            smoothstep_order=self.smoothstep_order,
-            smoothpl=kwargs.get("delta_m1", 1.),
-            smoothglow=kwargs.get("delta_m1", 1.),
-            smoothghigh=kwargs.get("delta_m1", 1.),
-        )
-
-
 class massprior_MLTP(pm_prob):
     def __init__(self, flag_smoothing=False):
         self.flag_smoothing = flag_smoothing
@@ -2810,8 +2778,12 @@ class massprior_logBspline(pm_prob):
     def __init__(self, n_basis, degree, spacing, spline_variable):
         self.n_basis = n_basis
         self.degree = degree
-        self.spacing = spacing
-        self.spline_variable = spline_variable
+        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
+        elif spacing == 'log':            self.spacing = 'log'
+        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
+        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
+        elif spline_variable == 'log':            self.spline_variable = 'log'
+        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters
 
@@ -2832,8 +2804,12 @@ class massprior_PowerLawlogBspline(pm_prob):
     def __init__(self, n_basis, degree, spacing, spline_variable):
         self.n_basis = n_basis
         self.degree = degree
-        self.spacing = spacing
-        self.spline_variable = spline_variable
+        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
+        elif spacing == 'log':            self.spacing = 'log'
+        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
+        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
+        elif spline_variable == 'log':            self.spline_variable = 'log'
+        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
 
