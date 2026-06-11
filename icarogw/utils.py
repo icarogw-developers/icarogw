@@ -3,7 +3,7 @@ import os as os
 import numpy as np
 from .cupy_pal import get_module_array
 
-def write_condor_files(home_folder,uname='simone.mastrogiovanni',
+def write_condor_files(home_folder,uname='sarah.ferraiuolo',
 agroup='ligo.dev.o4.cbc.hubble.icarogw',memory=10000,cpus=1,disk=10000):
     '''
     This function looks for all the *.py files in a folder and write a set of condor files
@@ -93,7 +93,7 @@ def check_posterior_samples_and_prior(posterior_samples, prior):
         raise ValueError('Prior can not have 0 values')
     return None
 
-def write_condor_files_catalog(home_folder,outfolder,nside,uname='simone.mastrogiovanni',
+def write_condor_files_catalog(home_folder,outfolder,catfile, fields_to_take, nside,uname='sarah.ferraiuolo',
 agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     Writes the python scripts and condor files to pixelize a galaxy catalog.
@@ -123,9 +123,16 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('import h5py \n')
     fp.write('outfolder = \'{:s}\' \n'.format(outfolder))
     fp.write('nside = {:d} \n'.format(nside))
-    fp.write('with h5py.File(\'\',\'r\') as cat:\n')
-    fp.write('\ticarogw.catalog.create_pixelated_catalogs(outfolder,nside,{key:cat[key] for key in [\'\']})\n')
+    fp.write('fields_to_take = [')
+    for i,ff in enumerate(fields_to_take):
+        fp.write('\'{:s}\''.format(ff))
+        if i!=(len(fields_to_take)-1):
+            fp.write(', ')
+    fp.write(']\n')
+    fp.write('with h5py.File(\'{:s}\',\'r\') as cat:\n'.format(catfile))
+    fp.write('\ticarogw.catalog.create_pixelated_catalogs(outfolder,nside,{key:cat[key] for key in fields_to_take})\n')
     fp.write('icarogw.catalog.clear_empty_pixelated_files(outfolder,nside) \n')
+    fp.write('print(\'All done!\') \n')
     fp.close()
         
     f = open(os.path.join(home_folder,'make_pixel_files.sh'),'w')
@@ -155,7 +162,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.close()
 
 
-def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, fields_to_take, grouping,apparent_magnitude_flag,nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,NumJobs,uname='simone.mastrogiovanni',
+def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, fields_to_take, grouping,apparent_magnitude_flag,nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,NumJobs,uname='sarah.ferraiuolo',
 agroup='ligo.dev.o4.cbc.hubble.icarogw'):
 
     '''
@@ -218,6 +225,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('filled_pixels = filled_pixels[bot_pix:top_pix] \n')
     fp.write('for pix in tqdm(filled_pixels,desc=\'Cleaning pixel\'):\n')
     fp.write('\ticarogw.catalog.remove_nans_pixelated_files(outfolder,pix,fields_to_take,grouping)\n')
+    fp.write('print(\'All done!\') \n')
     fp.close()
 
     f = open(os.path.join(home_folder,'clear_NaNs.sh'),'w')
@@ -277,6 +285,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('\ticarogw.catalog.calculate_mthr_pixelated_files(outfolder,pix,apparent_magnitude_flag,grouping,nside_mthr,mthr_percentile=mthr_percentile)\n')
     fp.write('for pix in tqdm(filled_pixels,desc=\'Calculating redshift grid\'):\n')
     fp.write('\ticarogw.catalog.get_redshift_grid_for_files(outfolder,pix,grouping,cosmo_ref,Nintegration=Nintegration,Numsigma=Numsigma,zcut=zcut)\n')
+    fp.write('print(\'All done!\') \n')
 
     f = open(os.path.join(home_folder,'calc_mthr_and_grid.sh'),'w')
     f.write('#!/bin/bash')
@@ -310,7 +319,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     os.system('chmod a+x '+os.path.join(home_folder,'*.sh'))    
 
 
-def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile,grouping ,uname='simone.mastrogiovanni', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
+def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile,grouping ,uname='sarah.ferraiuolo', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     Writes the python scripts and condor files to create the icarogw file
 
@@ -336,6 +345,7 @@ def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile
     fp.write('outfile = \'{:s}\' \n'.format(outfile))
     fp.write('grouping = \'{:s}\' \n'.format(grouping))
     fp.write('icarogw.catalog.initialize_icarogw_catalog(outfolder,outfile,grouping)\n')
+    fp.write('print(\'All done!\') \n')
 
     f = open(os.path.join(home_folder,'initialize_catalog.sh'),'w')
     f.write('#!/bin/bash')
@@ -365,7 +375,7 @@ def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile
 
     os.system('chmod a+x '+os.path.join(home_folder,'*.sh'))    
 
-def write_condor_files_calculate_interpolant(home_folder,outfolder,grouping, subgrouping,band,epsilon,NumJobs,ptype='gaussian',uname='simone.mastrogiovanni',
+def write_condor_files_calculate_interpolant(home_folder,outfolder,grouping, subgrouping,band,epsilon,NumJobs,ptype='gaussian',uname='sarah.ferraiuolo',
 agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     Writes the python scripts and condor files to removes NaNs and calculate apparent magnitude threshold cut for galaxy catalog
@@ -416,6 +426,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('subgrouping = \'{:s}\' \n'.format(subgrouping))
     fp.write('band = \'{:s}\' \n'.format(band))
     fp.write('epsilon = {:f} \n'.format(epsilon))
+    fp.write('LLstarcut = None \n')
     fp.write('ptype = \'{:s}\' \n'.format(ptype))
 
     
@@ -428,6 +439,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('filled_pixels = filled_pixels[bot_pix:top_pix] \n')
     fp.write('for pix in tqdm(filled_pixels,desc=\'Calculating interpolant\'):\n')
     fp.write('\ticarogw.catalog.calculate_interpolant_files(outfolder,z_grid,pix,grouping,subgrouping,band,cosmo_ref,epsilon,ptype=ptype)\n')
+    fp.write('print(\'All done!\') \n')
     fp.close()
 
     f = open(os.path.join(home_folder,'calc_interpolant.sh'),'w')
@@ -461,7 +473,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     
     os.system('chmod a+x '+os.path.join(home_folder,'*.sh'))   
 
-def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, subgrouping, uname='simone.mastrogiovanni', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
+def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, subgrouping, zsat=None, msat=None, uname='sarah.ferraiuolo', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     Writes the python scripts to finish the icarogw catalog given the files with interpolants
     
@@ -489,9 +501,12 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
     fp.write('outfile = \'{:s}\' \n'.format(outfile))
     fp.write('grouping = \'{:s}\' \n'.format(grouping))
     fp.write('subgrouping = \'{:s}\' \n'.format(subgrouping))
-    fp.write('icat = icarogw.catalog.icarogw_catalog(outfile,grouping,subgrouping)\n')
+    fp.write('zsat = {:s} \n'.format(str(zsat)))
+    fp.write('msat = {:s} \n'.format(str(msat)))
+    fp.write('icat = icarogw.catalog.icarogw_catalog(outfile,grouping,subgrouping, zsat, msat)\n')
     fp.write('icat.build_from_pixelated_files(outfolder)\n')
     fp.write('icat.save_to_hdf5_file()\n')
+    fp.write('print(\'All done!\') \n')
  
     f = open(os.path.join(home_folder,'finish_catalog.sh'),'w')
     f.write('#!/bin/bash')
@@ -521,9 +536,9 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
 
     os.system('chmod a+x '+os.path.join(home_folder,'*.sh'))    
 
-def write_all_scripts_catalog(home_folder,outfolder,nside,fields_to_take,grouping,apparent_magnitude_flag,
+def write_all_scripts_catalog(home_folder,outfolder,catfile,nside,fields_to_take,grouping,apparent_magnitude_flag,
                             nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,outfile,subgrouping,
-                            band, epsilon, NumJobs,uname='simone.mastrogiovanni', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
+                            band, epsilon, NumJobs, zsat=None, msat=None, uname='sarah.ferraiuolo', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     A Driver to write all the python scripts required to build the galaxy catalog. It also creates a dag file to produce the catalog on condor
 
@@ -568,7 +583,7 @@ def write_all_scripts_catalog(home_folder,outfolder,nside,fields_to_take,groupin
     '''
 
     # Write the condor files for the the pixelated catalog files
-    write_condor_files_catalog(home_folder=home_folder,outfolder=outfolder,nside=nside)
+    write_condor_files_catalog(home_folder=home_folder,outfolder=outfolder, catfile=catfile, fields_to_take=fields_to_take,nside=nside)
 
     fp = open(os.path.join(home_folder,'get_scripts.py'),'w')
     fp.write('import icarogw \n')
@@ -593,11 +608,13 @@ def write_all_scripts_catalog(home_folder,outfolder,nside,fields_to_take,groupin
     fp.write('zcut = {:f} \n'.format(zcut))
     fp.write('outfile = \'{:s}\' \n'.format(outfile))
     fp.write('subgrouping = \'{:s}\' \n'.format(subgrouping))
+    fp.write('zsat = {:s} \n'.format(str(zsat)))
+    fp.write('msat = {:s} \n'.format(str(msat)))
     fp.write('band = \'{:s}\' \n'.format(band))
     fp.write('epsilon = {:f} \n'.format(epsilon))
     fp.write('NumJobs = {:d} \n'.format(NumJobs))
     fp.write('''
-# Writhe the condor files for NaNs and mthr computation
+# Write the condor files for NaNs and mthr computation
 icarogw.utils.write_condor_files_nan_removal_mthr_computation(
 home_folder=home_folder,
 outfolder=outfolder,
@@ -627,9 +644,10 @@ outfolder=outfolder,grouping=grouping,subgrouping=subgrouping,
     fp.write(
     '''# Write to finish off the catalog
 icarogw.utils.write_condor_files_finish_catalog(home_folder=home_folder,
-outfolder=outfolder,outfile=outfile, grouping=grouping,subgrouping=subgrouping)
+outfolder=outfolder,outfile=outfile, grouping=grouping,subgrouping=subgrouping,zsat=zsat, msat=msat)
 '''
     )
+    fp.write('print(\'All done!\') \n')
 
     fp.close()
 

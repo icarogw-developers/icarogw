@@ -237,5 +237,5 @@ class posterior_samples(object):
         xp = get_module_array(logw)
         prob = xp.exp(logw)
         prob/=prob.sum()
-        idx = xp.random.choice(len(self.posterior_data['prior']),replace=replace,p=prob)
+        idx = xp.random.choice(len(self.posterior_data['prior']),size=Nsamp,replace=replace,p=prob)
         return {key:self.posterior_data[key][idx] for key in list(self.posterior_data.keys())}

@@ -6,8 +6,10 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw
+from .priors import logBspline, PowerLaw_logBspline
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
+from scipy.special import expit
 
 modgravity_wrappers = ['eps0_mod_wrap','Xi0_mod_wrap','extraD_mod_wrap',
                       'cM_mod_wrap','alphalog_mod_wrap']
@@ -146,6 +148,57 @@ class pm_prob(object):
         return self.prior.pdf(mass_1_source)
     def log_pdf(self,mass_1_source):
         return self.prior.log_pdf(mass_1_source)
+
+
+######################################################################
+
+class massratio_PowerlawSmooth(object):
+    '''
+    Conditional mass-ratio distribution
+    p(q | m1) propto q^{alpha_q}
+    for q in [mmin / m1, 1], with smoothing in m2 = q m1
+    '''
+    def __init__(self, mw):
+        self.population_parameters = ['alpha_q','delta_m']
+        self.mw = mw
+
+    def update(self, **kwargs):
+        self.alpha_q = kwargs['alpha_q']
+        self.delta_m = kwargs['delta_m']
+        
+    def pdf(self, mass_ratio, mass_1):
+        mmin = self.mw.prior.minval
+        qmin = mmin / mass_1 
+        p_q = PowerLaw(qmin, 1., self.alpha_q)
+        p_s = onesided_taperwindow_smoothing(mass=mass_1*mass_ratio,
+                                        mmin = mmin,
+                                        mmax = mass_1,
+                                        delta_m = self.delta_m)
+        # Not normalized anymore but should be ok with scale-free inferences.
+        return p_q.pdf(mass_ratio)*p_s
+        
+    def log_pdf(self, mass_ratio, mass_1):
+        return np.log(self.pdf(mass_ratio, mass_1))
+
+def onesided_taperwindow_smoothing(mass, mmin, mmax, delta_m):
+    '''
+    Apply a one-sided Planck-taper window between mmin and mmin+delta_m.
+    S = (1 + exp[ 1/x - 1/(1-x) ])^{-1}
+    with x = (m - mmin) / delta_m
+    '''
+    if delta_m <= 0:
+        return np.ones_like(mass)
+
+    x = (mass - mmin) / delta_m
+    x = np.clip(x, 1e-6, 1.0 - 1e-6)
+    
+    exponent = 1.0 / x - 1.0 / (1.0 - x)
+    window = expit(-exponent)
+    window *= (mass >= mmin) & (mass <= mmax)
+    return window
+    
+######################################################################
+
 
 class mass_ratio_prior_Gaussian(pm_prob):
     def __init__(self):
@@ -420,6 +473,43 @@ class m1m2_paired_massratio_bplmulti_dip(pm1m2_prob):
         
         self.prior=paired_2dimpdf(p,pairing_function)
 
+# Need to be reviewed for O4b
+class m1m2_paired_massratio_bpl_2peaks(pm1m2_prob):
+    '''
+    BPL + 2peaks for BBHs
+    '''
+    def __init__(self):
+        wrapper_m = massprior_BrokenPowerLawMultiPeak()
+        wrapper_m.population_parameters.remove('b')
+        self.population_parameters = wrapper_m.population_parameters + ['beta_bottom','beta_top','bottomsmooth', 'topsmooth', 
+                                                                        'leftdip','rightdip','leftdipsmooth', 
+                                                                        'rightdipsmooth','deep']
+        self.wrapper_m = wrapper_m
+    def update(self,**kwargs):
+        mbreak_NS = kwargs['leftdip'] + kwargs['leftdipsmooth']
+        mbreak_BH = kwargs['rightdip'] - kwargs['rightdipsmooth']
+        mbreak = 0.5*(mbreak_NS+mbreak_BH)
+        kwargs['b'] = (mbreak-kwargs['mmin'])/(kwargs['mmax']-kwargs['mmin'])
+        self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters+['b']})
+        p = SmoothedPlusDipProb(self.wrapper_m.prior,**{key:kwargs[key] for key in ['bottomsmooth', 'topsmooth', 
+                                                                        'leftdip', 'rightdip', 
+                                                                        'leftdipsmooth','rightdipsmooth','deep']})
+        
+        def pairing_function(m1,m2,beta_bottom=kwargs['beta_bottom'],beta_top=kwargs['beta_top'],mbreak=mbreak):
+            # The motivation for using only m2 for beta top and bottom is that if m2 is a NS for sure 
+            # it is more probable that the binary comes from isolated stellar binaries.
+            xp = get_module_array(m1)
+            q = m2/m1
+            toret = xp.ones_like(q)
+            idx = m2<=mbreak
+            toret[idx] = xp.power(q[idx],beta_bottom)
+            idx = m2>mbreak
+            toret[idx] = xp.power(q[idx],beta_top)
+            toret[q>1] = 0.
+            return toret
+        
+        self.prior=paired_2dimpdf(p,pairing_function)
+
 
 
 #LVK reviewed
@@ -486,6 +576,30 @@ class massprior_BinModel2d(pm1m2_prob):
 # Spin models #
 # ----------- #
 
+class spinprior_default_gaussian_bis(object):
+    '''
+    Same as spinprior_default_gaussian(), but here chi_1 and chi_2 share the same Gaussian distribution.
+    '''
+    def __init__(self):
+        self.population_parameters=['mu_chi','sigma_chi','sigma_t','csi_spin']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+
+    def update(self,**kwargs):        
+        self.csi_spin = kwargs['csi_spin']
+        self.aligned_pdf = TruncatedGaussian(1.,kwargs['sigma_t'],-1.,1.)
+        self.g = TruncatedGaussian(kwargs['mu_chi'],kwargs['sigma_chi'],0.,1.)
+    
+    def log_pdf(self, chi_1, chi_2, cos_t_1, cos_t_2, **kwargs):
+        xp = get_module_array(chi_1)
+        log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
+                                    xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
+        return self.g.log_pdf(chi_1)+self.g.log_pdf(chi_2)+log_angular_part
+        
+    def pdf(self, chi_1, chi_2, cos_t_1, cos_t_2, **kwargs):
+        xp = get_module_array(chi_1)
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2))
+
+# TO BE REVIEWED O4b
 class spinprior_default_evolving_gaussian(object):
     def __init__(self):
         self.population_parameters=['mu_chi','sigma_chi','mu_dot','sigma_dot'
@@ -527,6 +641,57 @@ class spinprior_default_evolving_gaussian(object):
         xp = get_module_array(chi_1)
         return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source))
 
+# TO BE REVIEWED O4b (priority 1)
+class spinprior_default_gaussian_window_gaussian(object):
+    '''
+    TO BE REVIEWED FOR O4b
+    Gaussian to Gaussian spin mass evolution
+    '''
+    def __init__(self):
+        self.population_parameters= ['mt', 
+                                     'delta_mt','mix_f',
+                                     'mu_chi_1','sigma_chi_1',
+                                     'mu_chi_2','sigma_chi_2',
+                                     'sigma_t','csi_spin']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+    
+
+    def update(self,**kwargs):
+        
+        self.mu_chi_1 = kwargs['mu_chi_1']
+        self.sigma_chi_1 = kwargs['sigma_chi_1']
+        self.mu_chi_2 = kwargs['mu_chi_2']
+        self.sigma_chi_2 = kwargs['sigma_chi_2']
+        self.csi_spin = kwargs['csi_spin']
+        self.gaussian_pdf_chi_1 = TruncatedGaussian(kwargs['mu_chi_1'],kwargs['sigma_chi_1'],0.,1.)
+        self.gaussian_pdf_chi_2 = TruncatedGaussian(kwargs['mu_chi_2'],kwargs['sigma_chi_2'],0.,1.)
+
+        self.mt, self.delta_mt, self.mix_f = kwargs['mt'], kwargs['delta_mt'], kwargs['mix_f']
+
+        self.aligned_pdf = TruncatedGaussian(1.,kwargs['sigma_t'],-1.,1.)
+
+    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
+        
+        xp = get_module_array(chi_1)
+        # self.mix_f is \lambda_f in the Eqs in the overleaf (defines the value of the window function at m=0)
+        wz_1 = _mixed_double_sigmoid_function(x=mass_1_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
+        wz_2 = _mixed_double_sigmoid_function(x=mass_2_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
+
+        pdf_1 = wz_1*self.gaussian_pdf_chi_1.pdf(chi_1)+(1-wz_1)*self.gaussian_pdf_chi_2.pdf(chi_1)
+        pdf_2 = wz_2*self.gaussian_pdf_chi_1.pdf(chi_2)+(1-wz_2)*self.gaussian_pdf_chi_2.pdf(chi_2)
+
+        log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
+                                    xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
+        
+        out = xp.log(pdf_1)+xp.log(pdf_2)+log_angular_part
+        
+        return out
+        
+    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
+        xp = get_module_array(chi_1)
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source))
+
+# TO BE REVIEWED O4b
 class spinprior_default_beta_window_gaussian(object):
     def __init__(self):
         self.population_parameters= ['mt', 
@@ -557,9 +722,9 @@ class spinprior_default_beta_window_gaussian(object):
     def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
         
         xp = get_module_array(chi_1)
-        # FIXME: The sigmoid function implementation has been changed. Check it is correct.
-        wz_1 = _mixed_double_sigmoid_function(mass_1_source, self.mix_f, 0., self.mt, self.delta_mt)
-        wz_2 = _mixed_double_sigmoid_function(mass_2_source, self.mix_f, 0., self.mt, self.delta_mt)
+        
+        wz_1 = _mixed_double_sigmoid_function(x=mass_1_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
+        wz_2 = _mixed_double_sigmoid_function(x=mass_2_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
 
         pdf_1 = wz_1*self.beta_pdf_chi.pdf(chi_1)+(1-wz_1)*self.gaussian_pdf_chi.pdf(chi_1)
         pdf_2 = wz_2*self.beta_pdf_chi.pdf(chi_2)+(1-wz_2)*self.gaussian_pdf_chi.pdf(chi_2)
@@ -575,7 +740,7 @@ class spinprior_default_beta_window_gaussian(object):
         xp = get_module_array(chi_1)
         return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source))
 
-
+# TO BE REVIEWED O4b
 class spinprior_default_beta_window_beta(object):
     def __init__(self):
         self.population_parameters= ['mt', 
@@ -607,9 +772,9 @@ class spinprior_default_beta_window_beta(object):
     def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
         
         xp = get_module_array(chi_1)
-        # FIXME: The sigmoid function implementation has been changed. Check it is correct.
-        wz_1 = _mixed_double_sigmoid_function(mass_1_source, self.mix_f, 0., self.mt, self.delta_mt)
-        wz_2 = _mixed_double_sigmoid_function(mass_2_source, self.mix_f, 0., self.mt, self.delta_mt)
+        
+        wz_1 = _mixed_double_sigmoid_function(x=mass_1_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
+        wz_2 = _mixed_double_sigmoid_function(x=mass_2_source, xt=self.mt, delta_xt=self.delta_mt, mix_x0=self.mix_f, mix_x1=0.)
 
         pdf_1 = wz_1*self.beta_pdf_chi_low.pdf(chi_1)+(1-wz_1)*self.beta_pdf_chi_high.pdf(chi_1)
         pdf_2 = wz_2*self.beta_pdf_chi_low.pdf(chi_2)+(1-wz_2)*self.beta_pdf_chi_high.pdf(chi_2)
@@ -652,7 +817,6 @@ class spinprior_default(object):
         xp = get_module_array(chi_1)
         return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2))
 
-
 #LVK reviewed
 class spinprior_default_gaussian(object):
     def __init__(self):
@@ -665,15 +829,90 @@ class spinprior_default_gaussian(object):
         self.g1 = TruncatedGaussian(kwargs['mu_chi_1'],kwargs['sigma_chi_1'],0.,1.)
         self.g2 = TruncatedGaussian(kwargs['mu_chi_2'],kwargs['sigma_chi_2'],0.,1.)
     
-    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2):
+    def log_pdf(self, chi_1, chi_2, cos_t_1, cos_t_2, **kwargs):
         xp = get_module_array(chi_1)
         log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
                                     xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
         return self.g1.log_pdf(chi_1)+self.g2.log_pdf(chi_2)+log_angular_part
         
-    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2):
+    def pdf(self, chi_1, chi_2, cos_t_1, cos_t_2, **kwargs):
         xp = get_module_array(chi_1)
         return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2))
+
+
+
+import numpy as np
+from scipy.stats import truncnorm
+
+def log_truncnorm_pdf(x, mean, std, lower, upper):
+    # Standardize bounds
+    a = (lower - mean) / std
+    b = (upper - mean) / std
+    # Standardize x
+    x_std = (x - mean) / std
+
+    # Get the log PDF from the truncated normal
+    log_pdf = truncnorm.logpdf(x_std, a, b, loc=0, scale=1) - np.log(std)
+    return log_pdf
+
+class spinprior_default_gaussian_zeroed(object):
+    def __init__(self):
+        self.population_parameters=['mu_chi_1','mu_chi_2','sigma_chi_1','sigma_chi_2','sigma_t','csi_spin']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+
+    def update(self,**kwargs):        
+        self.csi_spin = kwargs['csi_spin']
+        self.aligned_pdf = TruncatedGaussian(1.,kwargs['sigma_t'],-1.,1.)
+        self.mu_chi_1 = kwargs['mu_chi_1']
+        self.mu_chi_2 = kwargs['mu_chi_2']
+        self.sigma_chi_1 = kwargs['sigma_chi_1']
+        self.sigma_chi_2 = kwargs['sigma_chi_2']
+        
+    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source):
+        xp = get_module_array(chi_1)
+        amax_1 = xp.where(mass_1_source<2.0, 0.4, 1.0) # To be consistent with injections
+        amax_2 = xp.where(mass_2_source<2.0, 0.4, 1.0)  # To be consistent with injections
+        log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
+                                    xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
+
+        log_g1 = log_truncnorm_pdf(chi_1,self.mu_chi_1,self.sigma_chi_1,0.,amax_1)
+        log_g2 = log_truncnorm_pdf(chi_2,self.mu_chi_2,self.sigma_chi_2,0.,amax_2)
+        
+        return log_g1+log_g2+log_angular_part
+        
+    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source):
+        xp = get_module_array(chi_1)
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source))
+
+
+class spinprior_default_gaussian_zeroed_spin_bis(object):
+    def __init__(self):
+        self.population_parameters=['mu_chi','sigma_chi','sigma_t','csi_spin']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+
+    def update(self,**kwargs):        
+        self.csi_spin = kwargs['csi_spin']
+        self.aligned_pdf = TruncatedGaussian(1.,kwargs['sigma_t'],-1.,1.)
+        self.mu_chi_1 = kwargs['mu_chi']
+        self.mu_chi_2 = kwargs['mu_chi']
+        self.sigma_chi_1 = kwargs['sigma_chi']
+        self.sigma_chi_2 = kwargs['sigma_chi']
+        
+    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source):
+        xp = get_module_array(chi_1)
+        amax_1 = xp.where(mass_1_source<2.0, 0.4, 1.0) # To be consistent with injections
+        amax_2 = xp.where(mass_2_source<2.0, 0.4, 1.0)  # To be consistent with injections
+        log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
+                                    xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
+
+        log_g1 = log_truncnorm_pdf(chi_1,self.mu_chi_1,self.sigma_chi_1,0.,amax_1)
+        log_g2 = log_truncnorm_pdf(chi_2,self.mu_chi_2,self.sigma_chi_2,0.,amax_2)
+        
+        return log_g1+log_g2+log_angular_part
+        
+    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source):
+        xp = get_module_array(chi_1)
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source, mass_2_source))
 
 
 
@@ -2935,4 +3174,158 @@ class massprior_4PL_global_mmax(pm_prob):
             delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
             delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
             delta_m_d = kwargs.get('delta_m_c', 1.0) # if no smoothing, default 1. value
+##################### SPIN - MASS - REDSHIFT Correlation models ####################
+
+class spinprior_linear_chieff_q(object):
+    '''
+    Definition
+    ----------
+    Wrapper for the evolving spin model chi-eff-q inspired from: https://arxiv.org/pdf/2508.18083
+    p(chi_eff | q) = Truncated Gaussian on [-1, 1]
+    with mean and log-variance linear in q = m2/m1
+    
+    Parameters
+    ----------
+    mu_chieff_0, mu_chieff_1: parameters for the linear evolution of the mean of the Gaussian
+    ln_sigma_chieff_0,ln_sigma_chieff_1:  parameters for the linear evolution of the ln of the Gaussian width
+    x0: pivot value, default is 0.
+    
+    '''
+    def __init__(self):
+        self.population_parameters=['mu_chieff_0','mu_chieff_1','ln_sigma_chieff_0','ln_sigma_chieff_1','x0']
+        self.event_parameters=['chi_eff','mass_1_source','mass_2_source']
+
+    def update(self,**kwargs):
+        self.mu_chieff_0 = kwargs['mu_chieff_0']
+        self.mu_chieff_1 = kwargs['mu_chieff_1']
+        self.ln_sigma_chieff_0 = kwargs['ln_sigma_chieff_0']
+        self.ln_sigma_chieff_1 = kwargs['ln_sigma_chieff_1']
+        self.x0 = kwargs['x0']
+
+    def calculate_mu_chieff(self,q):
+        return self.mu_chieff_0 + self.mu_chieff_1*(q - self.x0)
+        
+    def calculate_ln_sigma_chieff(self,q):
+        return self.ln_sigma_chieff_0 + self.ln_sigma_chieff_1*(q - self.x0)
+    
+    def log_pdf(self,chi_eff,mass_1_source,mass_2_source):
+        xp = get_module_array(mass_1_source)
+        q = mass_2_source / mass_1_source
+        
+        mu = self.calculate_mu_chieff(q)
+        ln_sigma = self.calculate_ln_sigma_chieff(q)
+        sigma = xp.exp(ln_sigma)
+        # clipping to avoid issue of normalization and dirac like behavior ? sigma = np.exp(np.clip(ln_sigma, -10, 2)) 
+        
+        dist = TruncatedGaussian(mu,sigma,-1.,1.)
+        return dist.log_pdf(chi_eff)
+         
+    def pdf(self,chi_eff,mass_1_source,mass_2_source):
+        xp = get_module_array(mass_1_source)
+        return xp.exp(self.log_pdf(chi_eff,mass_1_source,mass_2_source))
+
+class spinprior_linear_chieff_z(object):
+    '''
+    Definition
+    ----------
+    Wrapper for the evolving spin model chi-eff-z inspired from: https://arxiv.org/pdf/2508.18083
+    p(chi_eff | z) = Truncated Gaussian on [-1, 1]
+    with mean and log-variance linear in z
+    
+    Parameters
+    ----------
+    mu_chieff_0, mu_chieff_1
+        parameters for the linear evolution of the mean of the Gaussian
+    ln_sigma_chieff_0,ln_sigma_chieff_1
+        parameters for the linear evolution of the ln of the Gaussian width
+    x0
+        pivot value, default is 0.
+    
+    '''
+    def __init__(self):
+        self.population_parameters=['mu_chieff_0','mu_chieff_1','ln_sigma_chieff_0','ln_sigma_chieff_1','x0']
+        self.event_parameters=['chi_eff','luminosity_distance']
+
+    def update(self,**kwargs):
+        self.mu_chieff_0 = kwargs['mu_chieff_0']
+        self.mu_chieff_1 = kwargs['mu_chieff_1']
+        self.ln_sigma_chieff_0 = kwargs['ln_sigma_chieff_0']
+        self.ln_sigma_chieff_1 = kwargs['ln_sigma_chieff_1']
+        self.x0 = kwargs['x0']
+
+    def calculate_mu_chieff(self,z):
+        return self.mu_chieff_0 + self.mu_chieff_1*(z - self.x0)
+        
+    def calculate_ln_sigma_chieff(self,z):
+        return self.ln_sigma_chieff_0 + self.ln_sigma_chieff_1*(z - self.x0)
+
+    def log_pdf(self,chi_eff,z):
+        xp = get_module_array(chi_eff)
+        mu = self.calculate_mu_chieff(z)
+        ln_sigma = self.calculate_ln_sigma_chieff(z)
+        sigma = xp.exp(ln_sigma)
+        
+        dist = TruncatedGaussian(mu,sigma,-1.,1.)
+        return dist.log_pdf(chi_eff)
+         
+    def pdf(self,chi_eff,z):
+        xp = get_module_array(chi_eff)
+        return xp.exp(self.log_pdf(chi_eff,z))
+
+
+
+# ------------------------------------ #
+#          B-splines models            #
+# ------------------------------------ #
+
+class massprior_logBspline(pm_prob):
+    def __init__(self, n_basis, degree, spacing, spline_variable):
+        self.n_basis = n_basis
+        self.degree = degree
+        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
+        elif spacing == 'log':            self.spacing = 'log'
+        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
+        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
+        elif spline_variable == 'log':            self.spline_variable = 'log'
+        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
+        self.prior = logBspline(
+            minval=kwargs['mmin'],
+            maxval=kwargs['mmax'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            spacing=self.spacing,
+            spline_variable=self.spline_variable,
+            **coeffs
+        )
+
+
+class massprior_PowerLawlogBspline(pm_prob):
+    def __init__(self, n_basis, degree, spacing, spline_variable):
+        self.n_basis = n_basis
+        self.degree = degree
+        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
+        elif spacing == 'log':            self.spacing = 'log'
+        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
+        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
+        elif spline_variable == 'log':            self.spline_variable = 'log'
+        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
+        self.prior = PowerLaw_logBspline(
+            minval = kwargs['mmin'],
+            maxval = kwargs['mmax'],
+            alpha  = - kwargs['alpha'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            spacing=self.spacing,
+            spline_variable=self.spline_variable,
+            **coeffs
         )
