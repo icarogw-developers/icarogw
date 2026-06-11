@@ -616,8 +616,10 @@ class  icarogw_catalog(object):
             if len(idx) == 0:
                 continue
             else:
-                band = pcat[self.grouping][self.subgrouping].attrs['band']
-                epsilon = pcat[self.grouping][self.subgrouping].attrs['epsilon']
+                pixel_file = os.path.join(outfolder, f'pixel_{filled_pixels[idx[0]]}.hdf5')
+                with h5py.File(pixel_file) as pcat:
+                    band = pcat[self.grouping][self.subgrouping].attrs['band']
+                    epsilon = pcat[self.grouping][self.subgrouping].attrs['epsilon']
                 self.band = band
                 self.epsilon = epsilon
                 self.calc_kcorr=kcorr(band)
@@ -720,6 +722,7 @@ class  icarogw_catalog(object):
             # Update attributes
             subgroup.attrs['epsilon'] = self.epsilon
             subgroup.attrs['band'] = self.band
+            subgroup.attrs['gwcosmo-correction'] = False
     
             # Delete datasets if they exist
             for dset_name in ['vals_interpolant', 'bg_vals_interpolant']:
@@ -738,6 +741,11 @@ class  icarogw_catalog(object):
         '''
         
         with h5py.File(self.outfile,'r') as icat:
+            # Check if the completeness method is icaro or gwcosmo
+            flag = icat[self.grouping][self.subgrouping].attrs['gwcosmo-correction']
+            if flag:
+                raise ValueError('This is not a icarogw corrected file')
+            
             self.moc_mthr_map = HealpixMap(data=icat[self.grouping]['mthr_moc_map'][:],uniq=icat[self.grouping]['uniq_moc_map'][:])
             self.z_grid = icat[self.grouping]['z_grid'][:]
             self.band = icat[self.grouping][self.subgrouping].attrs['band']
@@ -1125,12 +1133,10 @@ class  icarogw_catalog_correction_gwcosmo(object):
         '''
         
         with h5py.File(self.outfile,'r') as icat:
-            try:
-                flag = icat[self.grouping][self.subgrouping].attrs['gwcosmo-correction']
-                if not flag:
-                    raise ValueError('This is not a gwcosmo corrected file')
-            except:
-                raise ValueError('This is not a gwcosmo corrected file')
+            # Check if the completeness method is icaro or gwcosmo
+            flag = icat[self.grouping][self.subgrouping].attrs['gwcosmo-correction']
+            if not flag:
+                raise ValueError('This is not a icarogw corrected file')
                 
             self.moc_mthr_map = HealpixMap(data=icat[self.grouping]['mthr_moc_map'][:],uniq=icat[self.grouping]['uniq_moc_map'][:])
             self.z_grid = icat[self.grouping]['z_grid'][:]
