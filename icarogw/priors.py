@@ -1769,10 +1769,11 @@ class GaussianStationary():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
+        gaussian = TruncatedGaussian(self.mu, self.sigma, self.mmin_g, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)
@@ -1792,10 +1793,11 @@ class GaussianLinear():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
+        gaussian = TruncatedGaussian(self.muz, self.sigmaz, self.mmin, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)
@@ -1808,6 +1810,227 @@ class GaussianLinear():
         return self.muz, self.sigmaz
 
 
+class TriplePowerLaw(basic_1dimpdf):
+    '''
+        Class implementing the mass function model for three stationary PowerLaws.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaws.
+    '''
+
+    def __init__(
+        self, 
+        alpha_a, 
+        mmin_a, 
+        mmax_a, 
+        alpha_b, 
+        mmin_b, 
+        mmax_b, 
+        alpha_c, 
+        mmin_c, 
+        mmax_c, 
+        mix_a, 
+        mix_b, 
+        smooth=False, 
+        delta_m_a=1., 
+        delta_m_b=1., 
+        delta_m_c=1., 
+    ):
+
+        self.alpha_a = alpha_a
+        self.mmin_a = mmin_a
+        self.mmax_a = mmax_a
+        self.alpha_b = alpha_b
+        self.mmin_b = mmin_b
+        self.mmax_b = mmax_b
+        self.alpha_c = alpha_c
+        self.mmin_c = mmin_c
+        self.mmax_c = mmax_c
+        self.mix_a = mix_a
+        self.mix_b = mix_b
+        self.delta_m_a = delta_m_a
+        self.delta_m_b = delta_m_b
+        self.delta_m_c = delta_m_c
+
+        self.powerlaw_class_a = PowerLaw(
+            self.mmin_a, 
+            self.mmax_a, 
+            self.alpha_a, 
+        )
+        self.powerlaw_class_b = PowerLaw(
+            self.mmin_b, 
+            self.mmax_b, 
+            self.alpha_b, 
+        )
+        self.powerlaw_class_c = PowerLaw(
+            self.mmin_c, 
+            self.mmax_c, 
+            self.alpha_c, 
+        )
+
+        if smooth:
+            self.powerlaw_class_a = LowpassSmoothedProb(
+                self.powerlaw_class_a, 
+                self.delta_m_a
+            )
+            self.powerlaw_class_b = LowpassSmoothedProb(
+                self.powerlaw_class_b, 
+                self.delta_m_b
+            )
+            self.powerlaw_class_c = LowpassSmoothedProb(
+                self.powerlaw_class_c, 
+                self.delta_m_c
+            )
+
+        super().__init__(
+            minval=min(
+                self.powerlaw_class_a.minval, 
+                self.powerlaw_class_b.minval, 
+                self.powerlaw_class_c.minval, 
+            ), 
+            maxval=max(
+                self.powerlaw_class_a.maxval, 
+                self.powerlaw_class_b.maxval, 
+                self.powerlaw_class_c.maxval, 
+            ), 
+        )
+
+    def _log_pdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_pdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_pdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_pdf(x) + xp.log(1. - self.mix_a - self.mix_b)
+        return xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c)
+
+    def _log_cdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_cdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_cdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_cdf(x) + xp.log(1. - self.mix_a - self.mix_b)
+        return xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c)
+
+
+class QuadruplePowerLaw(basic_1dimpdf):
+    '''
+        Class implementing the mass function model for three stationary PowerLaws.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaws.
+    '''
+
+    def __init__(
+        self, 
+        alpha_a, 
+        mmin_a, 
+        mmax_a, 
+        alpha_b, 
+        mmin_b, 
+        mmax_b, 
+        alpha_c, 
+        mmin_c, 
+        mmax_c, 
+        alpha_d, 
+        mmin_d, 
+        mmax_d, 
+        mix_a, 
+        mix_b, 
+        mix_c, 
+        smooth=False, 
+        delta_m_a=1., 
+        delta_m_b=1., 
+        delta_m_c=1., 
+        delta_m_d=1.
+    ):
+
+        self.alpha_a = alpha_a
+        self.mmin_a = mmin_a
+        self.mmax_a = mmax_a
+        self.alpha_b = alpha_b
+        self.mmin_b = mmin_b
+        self.mmax_b = mmax_b
+        self.alpha_c = alpha_c
+        self.mmin_c = mmin_c
+        self.mmax_c = mmax_c
+        self.alpha_d = alpha_d
+        self.mmin_d = mmin_d
+        self.mmax_d = mmax_d
+        self.mix_a = mix_a
+        self.mix_b = mix_b
+        self.mix_c = mix_c
+        self.delta_m_a = delta_m_a
+        self.delta_m_b = delta_m_b
+        self.delta_m_c = delta_m_c
+        self.delta_m_d = delta_m_d
+
+        self.powerlaw_class_a = PowerLaw(
+            self.mmin_a, 
+            self.mmax_a, 
+            self.alpha_a, 
+        )
+        self.powerlaw_class_b = PowerLaw(
+            self.mmin_b, 
+            self.mmax_b, 
+            self.alpha_b, 
+        )
+        self.powerlaw_class_c = PowerLaw(
+            self.mmin_c, 
+            self.mmax_c, 
+            self.alpha_c, 
+        )
+        self.powerlaw_class_d = PowerLaw(
+            self.mmin_d, 
+            self.mmax_d, 
+            self.alpha_d, 
+        )
+
+        if smooth:
+            self.powerlaw_class_a = LowpassSmoothedProb(
+                self.powerlaw_class_a, 
+                self.delta_m_a
+            )
+            self.powerlaw_class_b = LowpassSmoothedProb(
+                self.powerlaw_class_b, 
+                self.delta_m_b
+            )
+            self.powerlaw_class_c = LowpassSmoothedProb(
+                self.powerlaw_class_c, 
+                self.delta_m_c
+            )
+            self.powerlaw_class_d = LowpassSmoothedProb(
+                self.powerlaw_class_d, 
+                self.delta_m_d
+            )
+
+        super().__init__(
+            minval=min(
+                self.powerlaw_class_a.minval, 
+                self.powerlaw_class_b.minval, 
+                self.powerlaw_class_c.minval, 
+                self.powerlaw_class_d.minval
+            ), 
+            maxval=max(
+                self.powerlaw_class_a.maxval, 
+                self.powerlaw_class_b.maxval, 
+                self.powerlaw_class_c.maxval, 
+                self.powerlaw_class_d.maxval
+            ), 
+        )
+
+    def _log_pdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_pdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_pdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_pdf(x) + xp.log(self.mix_c)
+        log_pl_d = self.powerlaw_class_d.log_pdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
+        return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
+
+    def _log_cdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_cdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_cdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_cdf(x) + xp.log(self.mix_c)
+        log_pl_d = self.powerlaw_class_d.log_cdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
+        return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
 # ------------------------------------ #
 #          B-splines models            #
 # ------------------------------------ #

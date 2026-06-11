@@ -16,5 +16,5 @@ setuptools.setup(
     python_requires='>=3.12',
     packages=['icarogw'],
     install_requires=['bilby==2.6.0','mhealpy==0.3.6',
-                     'ligo.skymap==2.4.0','mpmath==1.3.0','seaborn==0.13.2','nessai-bilby==0.1.0.post0']
+                     'ligo.skymap==2.4.0','mpmath==1.3.0','seaborn==0.13.2']
 )
