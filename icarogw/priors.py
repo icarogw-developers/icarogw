@@ -2188,7 +2188,7 @@ class logBspline(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))
 
 
 class PowerLaw_logBspline(basic_1dimpdf):
@@ -2249,24 +2249,33 @@ class PowerLaw_logBspline(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))
 
 
 
 class logBspline_freeKnots(basic_1dimpdf):
 
-    def __init__(self, minval, maxval, n_basis, degree, **coeffs_and_spacings):
+    def __init__(self, minval, maxval, n_basis, degree, **coeffs_and_nested_spacings):
         super().__init__(minval, maxval)
         
         self.degree = degree
         self.n_basis = n_basis
 
-        self.coeffs = np.asarray([0.0] + [coeffs_and_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+        self.coeffs = np.asarray([0.0] + [coeffs_and_nested_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
 
-        knots_spacings = np.asarray([coeffs_and_spacings[f's{i}'] for i in range(1, self.n_basis - self.degree)])
-        self.knots_cumulative_spacings = np.cumsum(knots_spacings)
-        if np.any(self.knots_cumulative_spacings > 1.): 
-            raise ValueError("knots positions exceed distributution support range. Make sure knots spacings add up to <= 1.")
+        nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
+
+        # Building the knots spacings with the stick breaking procedure.
+        # This allows for a Dirichlet prior of knots spacings (uniform on simplex)
+        # when a p(zi) = Beta(i, n-i) prior is used.
+        spacings = np.ones_like(nested_spacings)
+        remaining = 1.
+        for i, zip1 in enumerate(nested_spacings):
+            spacings[i] = remaining * zip1
+            remaining *= 1 - zip1
+        self.cumulative_spacings = np.cumsum(spacings)
+        if np.any(self.cumulative_spacings > 1.): 
+            raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
 
         self._setup_grid_and_knots()
 
@@ -2277,7 +2286,7 @@ class logBspline_freeKnots(basic_1dimpdf):
         """
         # xp = self.xp
         k = self.degree
-        interior = self.minval + self.knots_cumulative_spacings * (self.maxval - self.minval)
+        interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
         t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
         self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
 
@@ -2372,7 +2381,7 @@ class logBspline_freeKnots(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))
 
 
 class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
@@ -2433,4 +2442,4 @@ class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))

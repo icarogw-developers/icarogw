@@ -2833,11 +2833,11 @@ class massprior_PowerLawlogBspline_freeKnots(pm_prob):
         self.n_basis = n_basis
         self.degree = degree
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
-        self.spacing_parameters = [f's{i}' for i in range(1, self.n_basis - self.degree)]
-        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters + self.spacing_parameters
+        self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters + self.nested_spacing_parameters
 
     def update(self, **kwargs):
-        coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.spacing_parameters)}
+        coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.nested_spacing_parameters)}
         self.prior = PowerLaw_logBspline_freeKnots(
             minval = kwargs['mmin'],
             maxval = kwargs['mmax'],
