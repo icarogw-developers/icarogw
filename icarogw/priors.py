@@ -2169,7 +2169,7 @@ class logBspline(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))
 
 
 class PowerLaw_logBspline(basic_1dimpdf):
@@ -2230,4 +2230,4 @@ class PowerLaw_logBspline(basic_1dimpdf):
         y_interp = y_interp / y_interp[-1]
         y_interp = xp.asarray(y_interp)
 
-        return xp.interp(x, x_interp, y_interp)
+        return xp.log(xp.interp(x, x_interp, y_interp))
