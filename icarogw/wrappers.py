@@ -3174,6 +3174,7 @@ class massprior_4PL_global_mmax(pm_prob):
             delta_m_b = kwargs.get('delta_m_b', 1.0), # if no smoothing, default 1. value
             delta_m_c = kwargs.get('delta_m_c', 1.0), # if no smoothing, default 1. value
             delta_m_d = kwargs.get('delta_m_c', 1.0) # if no smoothing, default 1. value
+        )
 ##################### SPIN - MASS - REDSHIFT Correlation models ####################
 
 class spinprior_linear_chieff_q(object):
