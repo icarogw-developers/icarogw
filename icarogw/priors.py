@@ -2250,3 +2250,187 @@ class PowerLaw_logBspline(basic_1dimpdf):
         y_interp = xp.asarray(y_interp)
 
         return xp.interp(x, x_interp, y_interp)
+
+
+
+class logBspline_freeKnots(basic_1dimpdf):
+
+    def __init__(self, minval, maxval, n_basis, degree, **coeffs_and_spacings):
+        super().__init__(minval, maxval)
+        
+        self.degree = degree
+        self.n_basis = n_basis
+
+        self.coeffs = np.asarray([0.0] + [coeffs_and_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+
+        knots_spacings = np.asarray([coeffs_and_spacings[f's{i}'] for i in range(1, self.n_basis - self.degree)])
+        self.knots_cumulative_spacings = np.cumsum(knots_spacings)
+        if np.any(self.knots_cumulative_spacings > 1.): 
+            raise ValueError("knots positions exceed distributution support range. Make sure knots spacings add up to <= 1.")
+
+        self._setup_grid_and_knots()
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        # xp = self.xp
+        k = self.degree
+        interior = self.minval + self.knots_cumulative_spacings * (self.maxval - self.minval)
+        t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
+        self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
+
+        self._x_grid = np.linspace(self.minval, self.maxval, 1000)
+        self._B_grid = self.bspline_basis(self._x_grid)
+
+    def bspline_basis(self, x):#, t, k = 3):
+        """
+        Compute B-spline basis functions using Cox-de Boor recursion.
+        """
+        xp = get_module_array(x)
+        n_points = len(x)
+        # Need to move the knots to y space as well
+        t_local = xp.asarray(self.t)
+
+        y = x
+        t_local = t_local
+        
+        # Zeroth-degree basis
+        B = xp.zeros((n_points, self.n_basis))
+        for i in range(self.n_basis):
+            B[:, i] = xp.where((y >= t_local[i]) & (y < t_local[i + 1]), 1.0, 0.0)
+        if y.size and t_local.size:
+            B[y == t_local[-1], -1] = 1.0
+
+        # Cox-de Boor recursion
+        for d in range(1, self.degree + 1):
+            t_i = t_local[:self.n_basis]
+            t_id = t_local[d:self.n_basis + d]
+            t_ip1 = t_local[1:self.n_basis + 1]
+            t_ip1d1 = t_local[d + 1:self.n_basis + d + 1]
+
+            denom1 = xp.where(t_id - t_i > 0, t_id - t_i, 1.0)
+            denom2 = xp.where(t_ip1d1 - t_ip1 > 0, t_ip1d1 - t_ip1, 1.0)
+
+            term1 = ((y[:, None] - t_i[None, :]) / denom1[None, :]) * B
+            term1 = xp.where(denom1[None, :] > 0, term1, 0.0)
+
+            term2 = xp.zeros_like(B)
+            if self.n_basis > 1:
+                term2[:, :-1] = ((t_ip1d1[None, :-1] - y[:, None]) / denom2[None, :-1]) * B[:, 1:]
+                term2 = xp.where(denom2[None, :] > 0, term2, 0.0)
+
+            B = term1 + term2
+
+        return B
+
+    def eval_spline(self, x):
+        """
+        Evaluate the spline at x.
+        """
+        xp = get_module_array(x)
+        B = self.bspline_basis(x.ravel())
+        coeffs = xp.asarray(self.coeffs)
+        s_flat = B.dot(coeffs)
+        return s_flat.reshape(x.shape)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        coeffs = cp2np(self.coeffs)
+        s_grid = self._B_grid.dot(coeffs)
+        s_max = np.max(s_grid)
+        
+        integrand = np.exp(s_grid - s_max)
+        Z = np.trapezoid(integrand, self._x_grid)
+
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.interp(x, x_interp, y_interp)
+
+
+class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, **coeffs_and_spacings):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline_freeKnots(minval, maxval, n_basis, degree, **coeffs_and_spacings)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        coeffs = cp2np(self.component_spline.coeffs)
+        # print("type(coeffs): ", type(coeffs))
+        # print("type(_B_grid): ", type(self.component_spline._B_grid))
+        s_grid = self.component_spline._B_grid.dot(coeffs)
+
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        Z = np.trapz(integrand, self.component_spline._x_grid)
+
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
+        )
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.interp(x, x_interp, y_interp)
