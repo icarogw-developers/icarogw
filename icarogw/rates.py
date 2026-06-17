@@ -1831,12 +1831,12 @@ class CBC_catalog_vanilla_rate(object):
 
 ##################### SPIN - MASS - REDSHIFT Correlation models ####################
 
-class CBC_rate_m1q_z_chieffq(object):
+class CBC_rate_m1m2_z_chieffq(object):
     '''
     This rate is specifically built for an inference with a pop model built as:
     p_pop = p(m1,q)p(z)p(chieff,q)
     '''
-    def __init__(self,cosmology_wrapper,mass_wrapper,q_wrapper,rate_wrapper,spin_wrapper,
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,spin_wrapper,
                  scale_free=False):
         self.cw = cosmology_wrapper
         self.mw = mass_wrapper
@@ -1846,11 +1846,11 @@ class CBC_rate_m1q_z_chieffq(object):
         self.scale_free = scale_free
 
         if scale_free:
-            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.qw.population_parameters+self.sw.population_parameters
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters
         else: 
-            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.qw.population_parameters+self.sw.population_parameters+['R0']
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters+['R0']
 
-        event_parameters = ['mass_1','mass_ratio','chi_eff','luminosity_distance']
+        event_parameters = ['mass_1','mass_2','chi_eff','luminosity_distance']
     
         self.PEs_parameters = event_parameters.copy()
         self.injections_parameters = event_parameters.copy()
@@ -1858,7 +1858,6 @@ class CBC_rate_m1q_z_chieffq(object):
     def update(self,**kwargs):
         self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
         self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
-        self.qw.update(**{key: kwargs[key] for key in self.qw.population_parameters})
         self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
         self.sw.update(**{key: kwargs[key] for key in self.sw.population_parameters})
             
@@ -1869,17 +1868,12 @@ class CBC_rate_m1q_z_chieffq(object):
         xp = get_module_array(prior)
         z   = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
         m1s = kwargs['mass_1']/(1.+z)
-        m2s = m1s*kwargs['mass_ratio']
+        m2s = kwargs['mass_2']/(1.+z)
 
-        # weights for PEs
-        # w = 1/prior_{PE} * dN/(dm1d dq ddL dtd dchi) * 1/|J_(m1,m2)->(m1,q)|
-        # w = 1/prior_{PE} * dN/(dm1s dq dVc dts dchi) * dVc/dz * 1/|J_d->s| * 1/(1+z) * 1/m1
-        # w = 1/prior * p(m1,q)p(z)p(chi_eff|q) * dVc/dz * 1/|J_d->s| * 1/(1+z) * 1/m1
-        # note: no Jacobian for the spins since chieff is not redshifted
         log_dVc_dz   = xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         log_prior    = xp.log(prior)
-        log_jacobian = xp.log(detector2source_jacobian_q(z, self.cw.cosmology)) + xp.log1p(z) + xp.log(m1s)
-        log_pop      = self.mw.log_pdf(m1s)+self.qw.log_pdf(kwargs['mass_ratio'],m1s)+self.rw.log_evaluate(z)+self.sw.log_pdf(kwargs['chi_eff'],m1s,m2s)
+        log_jacobian = xp.log(detector2source_jacobian(z,self.cw.cosmology)) + xp.log1p(z)
+        log_pop      = self.mw.log_pdf(m1s,m2s)+self.rw.log_evaluate(z)+self.sw.log_pdf(kwargs['chi_eff'],m1s,m2s)
         log_weights  = log_pop + log_dVc_dz - log_prior - log_jacobian
 
         if not self.scale_free:
@@ -1892,26 +1886,25 @@ class CBC_rate_m1q_z_chieffq(object):
         return self.log_rate_PE(prior,**kwargs)
 
 
-class CBC_rate_m1q_z_chieffz(object):
+class CBC_rate_m1m2_z_chieffz(object):
     '''
     This rate is specifically built for an inference with a pop model built as:
     p_pop = p(m1,q)p(z)p(chieff,z)
     '''
-    def __init__(self,cosmology_wrapper,mass_wrapper,q_wrapper,rate_wrapper,spin_wrapper,
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,spin_wrapper,
                  scale_free=False):
         self.cw = cosmology_wrapper
         self.mw = mass_wrapper
-        self.qw = q_wrapper
         self.rw = rate_wrapper
         self.sw = spin_wrapper
         self.scale_free = scale_free
 
         if scale_free:
-            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.qw.population_parameters+self.sw.population_parameters
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters
         else: 
-            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.qw.population_parameters+self.sw.population_parameters+['R0']
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters+['R0']
 
-        event_parameters = ['mass_1','mass_ratio','chi_eff','luminosity_distance']
+        event_parameters = ['mass_1','mass_2','chi_eff','luminosity_distance']
     
         self.PEs_parameters = event_parameters.copy()
         self.injections_parameters = event_parameters.copy()
@@ -1919,7 +1912,6 @@ class CBC_rate_m1q_z_chieffz(object):
     def update(self,**kwargs):
         self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
         self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
-        self.qw.update(**{key: kwargs[key] for key in self.qw.population_parameters})
         self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
         self.sw.update(**{key: kwargs[key] for key in self.sw.population_parameters})
             
@@ -1930,16 +1922,12 @@ class CBC_rate_m1q_z_chieffz(object):
         xp = get_module_array(prior)
         z   = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
         m1s = kwargs['mass_1']/(1.+z)
+        m2s = kwargs['mass_2']/(1.+z)
 
-        # weights for PEs
-        # w = 1/prior_{PE} * dN/(dm1d dq ddL dtd dchi) * 1/|J_(m1,m2)->(m1,q)|
-        # w = 1/prior_{PE} * dN/(dm1s dq dVc dts dchi) * dVc/dz * 1/|J_d->s| * 1/(1+z) * 1/m1
-        # w = 1/prior * p(m1,q)p(z)p(chi_eff|z) * dVc/dz * 1/|J_d->s| * 1/(1+z) * 1/m1
-        # note: no Jacobian for the spins since chieff is not redshifted
         log_dVc_dz   = xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         log_prior    = xp.log(prior)
-        log_jacobian = xp.log(detector2source_jacobian_q(z, self.cw.cosmology)) + xp.log1p(z) + xp.log(m1s)
-        log_pop      = self.mw.log_pdf(m1s)+self.qw.log_pdf(kwargs['mass_ratio'],m1s)+self.rw.log_evaluate(z)+self.sw.log_pdf(kwargs['chi_eff'],z)
+        log_jacobian = xp.log(detector2source_jacobian(z,self.cw.cosmology)) + xp.log1p(z)
+        log_pop      = self.mw.log_pdf(m1s,m2s)+self.rw.log_evaluate(z)+self.sw.log_pdf(kwargs['chi_eff'],z)
         log_weights  = log_pop + log_dVc_dz - log_prior - log_jacobian
 
         if not self.scale_free:
