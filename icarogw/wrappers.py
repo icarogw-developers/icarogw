@@ -6,7 +6,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw
-from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots
+from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots, PowerLaw_logBspline_freeKnots_fromScipy
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -2827,7 +2827,6 @@ class massprior_PowerLawlogBspline(pm_prob):
         )
 
 
-
 class massprior_PowerLawlogBspline_freeKnots(pm_prob):
     def __init__(self, n_basis, degree):
         self.n_basis = n_basis
@@ -2839,6 +2838,26 @@ class massprior_PowerLawlogBspline_freeKnots(pm_prob):
     def update(self, **kwargs):
         coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.nested_spacing_parameters)}
         self.prior = PowerLaw_logBspline_freeKnots(
+            minval = kwargs['mmin'],
+            maxval = kwargs['mmax'],
+            alpha  = - kwargs['alpha'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            **coeffs_and_spacings
+        )
+
+
+class massprior_PowerLawlogBspline_freeKnots_fromScipy(pm_prob):
+    def __init__(self, n_basis, degree):
+        self.n_basis = n_basis
+        self.degree = degree
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters + self.nested_spacing_parameters
+
+    def update(self, **kwargs):
+        coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.nested_spacing_parameters)}
+        self.prior = PowerLaw_logBspline_freeKnots_fromScipy(
             minval = kwargs['mmin'],
             maxval = kwargs['mmax'],
             alpha  = - kwargs['alpha'],
