@@ -2455,53 +2455,42 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
 
         self.coeffs = np.asarray([0.0] + [coeffs_and_nested_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
 
-        nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
+        self.nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
+        self._setup_relative_knots_positions()
 
+        self._setup_grid_and_knots()
+        self._setup_logZ()
+        self._setup_interpolant()
+
+    def _setup_relative_knots_positions(self):
+        """
+        Compute relative knots position from nested spacings zi parameters
+        """
         # Building the knots spacings with the stick breaking procedure.
         # This allows for a Dirichlet prior of knots spacings (uniform on simplex)
-        # when a p(zi) = Beta(i, n-i) prior is used.
-        spacings = np.ones_like(nested_spacings)
+        # when a p(zi) = Beta(i, n_z-i) prior is used.
+        spacings = np.ones_like(self.nested_spacings)
         remaining = 1.
-        for i, zip1 in enumerate(nested_spacings):
+        for i, zip1 in enumerate(self.nested_spacings):
             spacings[i] = remaining * zip1
             remaining *= 1 - zip1
         self.cumulative_spacings = np.cumsum(spacings)
         if np.any(self.cumulative_spacings > 1.): 
             raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
 
-        self._setup_grid_and_knots()
-
     def _setup_grid_and_knots(self):
         """
         Recompute knots and precompute B-spline basis grid.
         Uses self.spacing ("log" or "uniform") to control spacing type.
         """
-        # xp = self.xp
-        k = self.degree
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
-        t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
+        t_start = np.repeat(self.minval, self.degree + 1)
+        t_end = np.repeat(self.maxval, self.degree + 1)
         self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
-
-        # self._x_grid = np.concatenate([
-        #     np.linspace(ti, tip1, 1000//(len(self.t)-1))
-        #     for ti, tip1 
-        #     in zip(self.t[k: len(interior)+k+1], self.t[k+1: len(interior)+k+2])
-        # ])
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
         self._s_grid = sn.interpolate.BSpline(self.t, self.coeffs, self.degree)(self._x_grid)
 
-    def eval_spline(self, x):
-        """
-        Evaluate the Bspline at x using scipy interpolant
-        """
-        xp = get_module_array(x)
-        xn = get_module_array_scipy(x)
-        t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
-        interpolant = xn.interpolate.BSpline(t, coeffs, self.degree)
-        s_flat = interpolant(x.ravel())
-        return s_flat.reshape(x.shape)
-
-    def logZ(self):
+    def _setup_logZ(self):
         """
         Compute log-normalization factor.
         """
@@ -2510,14 +2499,34 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         integrand = np.exp(self._s_grid - s_max)
         Z = np.trapezoid(integrand, self._x_grid)
 
-        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+        self.logZ = np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _setup_interpolant(self):
+        """
+        Initialise the scipy BSpline interpolant and store it
+        """
+        xp, _ = _set_xp_and_dtype()
+        # Convert knots and coeffs to cupy/numpy
+        knots = xp.asarray(self.t)
+        coeffs = xp.asarray(self.coeffs)
+        # Extract the corresponding scipy module, and initialize interpolant
+        xn = get_module_array_scipy(knots)
+        self.interpolant = xn.interpolate.BSpline(
+            knots, coeffs, self.degree
+        )
+
+    def eval_spline(self, x):
+        """
+        Evaluate the Bspline at x using scipy interpolant
+        """
+        return self.interpolant(x)
 
     def _log_pdf(self, x, normalize=True):
         """
         Evaluate log of normalized probability density function at m.
         """
         if normalize:
-            return self.eval_spline(x) - self.logZ()
+            return self.eval_spline(x) - self.logZ
         else:
             return self.eval_spline(x)
     
@@ -2543,36 +2552,38 @@ class PowerLaw_logBspline_freeKnots_fromScipy(basic_1dimpdf):
 
     def __init__(self, alpha, minval, maxval, n_basis, degree, **coeffs_and_spacings):
         super().__init__(minval, maxval)
+        # Initialise PL and spline components
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
         self.component_spline = logBspline_freeKnots_fromScipy(minval, maxval, n_basis, degree, **coeffs_and_spacings)
+        # pre compute normalisation
+        self._setup_logZ()
     
-    def logZ(self):
+    def _setup_logZ(self):
         """
         Compute log-normalization factor.
         """
         s_grid = self.component_spline._s_grid
 
-        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+        log_pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
 
-        tot_grid = s_grid + pl_grid
+        tot_grid = s_grid + log_pl_grid
         tot_max = np.max(tot_grid)
         
-        integrand = np.exp(pl_grid + s_grid - tot_max)
+        integrand = np.exp(log_pl_grid + s_grid - tot_max)
         Z = np.trapezoid(integrand, self.component_spline._x_grid)
 
-        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
-        return to_ret
+        self.logZ = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
 
     def _log_pdf(self, x):
         return (
             self.component_pl._log_pdf(x)
-            + self.component_spline._log_pdf(x, normalize=False)
-            - self.logZ()
             + np.log(PL_normfact(
                 minpl=self.minval, 
                 maxpl=self.maxval, 
                 alpha=self.component_pl.alpha
-            ))
+            )) # un-normalise the PL pdf.
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ # normalise the total pdf
         )
     
     def _log_cdf(self, x):
@@ -2586,12 +2597,16 @@ class PowerLaw_logBspline_freeKnots_fromScipy(basic_1dimpdf):
             np.exp(
                 self.component_pl._log_pdf(x_interp)
                 + self.component_spline._log_pdf(x_interp, normalize=False)
-                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+                + np.log(PL_normfact(
+                    minpl=self.minval, 
+                    maxpl=self.maxval, 
+                    alpha=self.component_pl.alpha
+                )) # un-normalise the PL pdf.
             ), 
             x = x_interp,
             initial = 0.
         )
-        y_interp = y_interp / y_interp[-1]
+        y_interp = y_interp / y_interp[-1] # normalise the CDF interpolant
         y_interp = xp.asarray(y_interp)
 
         return xp.log(xp.interp(x, x_interp, y_interp))
