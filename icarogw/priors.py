@@ -2396,8 +2396,6 @@ class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
         Compute log-normalization factor.
         """
         coeffs = cp2np(self.component_spline.coeffs)
-        # print("type(coeffs): ", type(coeffs))
-        # print("type(_B_grid): ", type(self.component_spline._B_grid))
         s_grid = self.component_spline._B_grid.dot(coeffs)
 
         pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
@@ -2476,17 +2474,11 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         Recompute knots and precompute B-spline basis grid.
         Uses self.spacing ("log" or "uniform") to control spacing type.
         """
-        # xp = self.xp
         k = self.degree
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
         t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
         self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
 
-        # self._x_grid = np.concatenate([
-        #     np.linspace(ti, tip1, 1000//(len(self.t)-1))
-        #     for ti, tip1 
-        #     in zip(self.t[k: len(interior)+k+1], self.t[k+1: len(interior)+k+2])
-        # ])
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
         self._s_grid = sn.interpolate.BSpline(self.t, self.coeffs, self.degree)(self._x_grid)
 
