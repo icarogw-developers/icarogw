@@ -2252,6 +2252,181 @@ class PowerLaw_logBspline(basic_1dimpdf):
         return xp.log(xp.interp(x, x_interp, y_interp))
 
 
+class logBspline_fromScipy(basic_1dimpdf):
+
+    def __init__(self, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
+        super().__init__(minval, maxval)
+        
+        self.degree = degree
+        self.n_basis = n_basis
+        self.spacing = spacing
+        self.spline_variable = spline_variable
+
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+
+        self._setup_grid_and_knots()
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        # Building the knots sequence and the integration grid depending on spacing option.
+        if self.spacing == "log":
+            interior = np.logspace(
+                np.log10(self.minval), 
+                np.log10(self.maxval), 
+                self.n_basis - self.degree + 1
+            )
+            self._x_grid = np.logspace(
+                np.log10(self.minval), 
+                np.log10(self.maxval), 
+                1000
+            )
+        elif self.spacing == "lin":
+            interior = np.linspace(
+                self.minval, 
+                self.maxval, 
+                self.n_basis - self.degree + 1
+            )
+            self._x_grid = np.linspace(
+                self.minval, 
+                self.maxval, 
+                1000
+            )
+        else:
+            raise ValueError(f"Invalid '{self.spacing}' spacing option. Please choose from: log, lin.")
+
+        # Building a clamped knots sequence (i.e. repeated end knots values)
+        t_start, t_end = np.repeat(self.minval, self.degree), np.repeat(self.maxval, self.degree)
+        self.t = np.concatenate([t_start, interior, t_end])
+
+        # Building spline grid for normalisation, depending on the spline_variable option
+        if self.spline_variable == 'log':
+            _s_grid = sn.interpolate.BSpline(
+                np.log(self.t), self.coeffs, self.degree
+            )(np.log(self._x_grid))
+        elif self.spline_variable == 'lin':
+            _s_grid = sn.interpolate.BSpline(
+                self.t, self.coeffs, self.degree
+            )(self._x_grid)
+        else:
+            raise ValueError(f"Invalid '{self.spline_variable}' spline variable option. Please choose from: log, lin.")
+        self._s_grid = _s_grid
+
+    def eval_spline(self, x):
+        """
+        Evaluate the Bspline at x using scipy interpolant
+        """
+        xp = get_module_array(x)
+        xn = get_module_array_scipy(x)
+        t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
+        # evaluate the spline depending on the spline_variable option
+        if self.spline_variable == 'log':
+            t_local = xp.log(t)
+            x_local = xp.log(x)
+        elif self.spline_variable == 'lin':
+            t_local = t
+            x_local = x
+        else:
+            # Technically useless case, already raised when intialising an instance of the class, kept for consistency
+            raise ValueError(f"Invalid '{self.spline_variable}' spline variable option. Please choose from: log, lin.")
+        interpolant = xn.interpolate.BSpline(t_local, coeffs, self.degree)
+        return interpolant(x_local)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_max = np.max(self._s_grid)
+        integrand = np.exp(self._s_grid - s_max)
+        Z = np.trapezoid(integrand, self._x_grid)
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class PowerLaw_logBspline_fromScipy(basic_1dimpdf):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline_fromScipy(minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_grid = self.component_spline._s_grid
+
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        Z = np.trapezoid(integrand, self.component_spline._x_grid)
+
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
+        )
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
 
 class logBspline_freeKnots(basic_1dimpdf):
 
@@ -2452,20 +2627,7 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         self.n_basis = n_basis
 
         self.coeffs = np.asarray([0.0] + [coeffs_and_nested_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
-
-        nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
-
-        # Building the knots spacings with the stick breaking procedure.
-        # This allows for a Dirichlet prior of knots spacings (uniform on simplex)
-        # when a p(zi) = Beta(i, n-i) prior is used.
-        spacings = np.ones_like(nested_spacings)
-        remaining = 1.
-        for i, zip1 in enumerate(nested_spacings):
-            spacings[i] = remaining * zip1
-            remaining *= 1 - zip1
-        self.cumulative_spacings = np.cumsum(spacings)
-        if np.any(self.cumulative_spacings > 1.): 
-            raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
+        self.nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
 
         self._setup_grid_and_knots()
 
@@ -2474,11 +2636,23 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         Recompute knots and precompute B-spline basis grid.
         Uses self.spacing ("log" or "uniform") to control spacing type.
         """
+        # Building the knots spacings with the stick breaking procedure.
+        # This allows for a Dirichlet prior of knots spacings (uniform on simplex)
+        # when a p(zi) = Beta(i, n-i) prior is used.
+        spacings = np.ones_like(self.nested_spacings)
+        remaining = 1.
+        for i, zip1 in enumerate(self.nested_spacings):
+            spacings[i] = remaining * zip1
+            remaining *= 1 - zip1
+        self.cumulative_spacings = np.cumsum(spacings)
+        if np.any(self.cumulative_spacings > 1.): 
+            raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
+        # Building a clamped knots sequence (i.e. repeated end knots values)
         k = self.degree
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
         t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
-        self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
-
+        self.t = np.concatenate([t_start, interior, t_end])
+        # Building x grid for normalisation
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
         self._s_grid = sn.interpolate.BSpline(self.t, self.coeffs, self.degree)(self._x_grid)
 

@@ -6,7 +6,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw
-from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots, PowerLaw_logBspline_freeKnots_fromScipy
+from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots, PowerLaw_logBspline_fromScipy, PowerLaw_logBspline_freeKnots_fromScipy
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -2816,6 +2816,33 @@ class massprior_PowerLawlogBspline(pm_prob):
     def update(self, **kwargs):
         coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
         self.prior = PowerLaw_logBspline(
+            minval = kwargs['mmin'],
+            maxval = kwargs['mmax'],
+            alpha  = - kwargs['alpha'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            spacing=self.spacing,
+            spline_variable=self.spline_variable,
+            **coeffs
+        )
+
+
+class massprior_PowerLawlogBspline_fromScipy(pm_prob):
+    def __init__(self, n_basis, degree, spacing, spline_variable):
+        self.n_basis = n_basis
+        self.degree = degree
+        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
+        elif spacing == 'log':            self.spacing = 'log'
+        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
+        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
+        elif spline_variable == 'log':            self.spline_variable = 'log'
+        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
+        self.prior = PowerLaw_logBspline_fromScipy(
             minval = kwargs['mmin'],
             maxval = kwargs['mmax'],
             alpha  = - kwargs['alpha'],
