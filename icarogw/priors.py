@@ -2490,8 +2490,7 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         xn = get_module_array_scipy(x)
         t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
         interpolant = xn.interpolate.BSpline(t, coeffs, self.degree)
-        s_flat = interpolant(x.ravel())
-        return s_flat.reshape(x.shape)
+        return interpolant(x)
 
     def logZ(self):
         """
