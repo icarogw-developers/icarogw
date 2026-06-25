@@ -2298,11 +2298,12 @@ class logBspline_fromScipy(basic_1dimpdf):
             raise ValueError(f"Invalid '{self.spacing}' spacing option. Please choose from: log, lin.")
 
         # Building a clamped knots sequence (i.e. repeated end knots values)
-        t_start, t_end = np.repeat(self.minval, self.degree), np.repeat(self.maxval, self.degree)
+        t_start, t_end = np.repeat(interior[0], self.degree), np.repeat(interior[-1], self.degree)
         self.t = np.concatenate([t_start, interior, t_end])
 
         # Building spline grid for normalisation, depending on the spline_variable option
         if self.spline_variable == 'log':
+            # print(np.log(self.t), np.diff(np.log(self.t)))
             _s_grid = sn.interpolate.BSpline(
                 np.log(self.t), self.coeffs, self.degree
             )(np.log(self._x_grid))
@@ -2460,9 +2461,9 @@ class logBspline_freeKnots(basic_1dimpdf):
         Uses self.spacing ("log" or "uniform") to control spacing type.
         """
         # xp = self.xp
-        k = self.degree
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
-        t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
+        t_start = np.repeat(interior[0], self.degree +1)
+        t_end = np.repeat(interior[-1], self.degree +1)
         self.t = np.concatenate([t_start, interior, t_end]) # Clamped knot vector
 
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
@@ -2648,9 +2649,9 @@ class logBspline_freeKnots_fromScipy(basic_1dimpdf):
         if np.any(self.cumulative_spacings > 1.): 
             raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
         # Building a clamped knots sequence (i.e. repeated end knots values)
-        k = self.degree
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
-        t_start, t_end = np.repeat(self.minval, k + 1), np.repeat(self.maxval, k + 1)
+        t_start = np.repeat(interior[0], self.degree +1)
+        t_end = np.repeat(interior[-1], self.degree +1)
         self.t = np.concatenate([t_start, interior, t_end])
         # Building x grid for normalisation
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
