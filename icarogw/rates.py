@@ -1840,7 +1840,6 @@ class CBC_rate_m1m2_z_chieffq(object):
                  scale_free=False):
         self.cw = cosmology_wrapper
         self.mw = mass_wrapper
-        self.qw = q_wrapper
         self.rw = rate_wrapper
         self.sw = spin_wrapper
         self.scale_free = scale_free
