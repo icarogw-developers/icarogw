@@ -2262,8 +2262,8 @@ class logBspline_freeKnots(basic_1dimpdf):
             raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
         # Building a clamped knots sequence (i.e. repeated end knots values)
         interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
-        t_start = np.repeat(interior[0], self.degree +1)
-        t_end = np.repeat(interior[-1], self.degree +1)
+        t_start = np.repeat(self.minval, self.degree + 1)
+        t_end = np.repeat(self.maxval, self.degree + 1)
         self.t = np.concatenate([t_start, interior, t_end])
         # Building x grid for normalisation
         self._x_grid = np.linspace(self.minval, self.maxval, 1000)
