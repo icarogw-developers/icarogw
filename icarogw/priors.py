@@ -2178,7 +2178,7 @@ class PowerLaw_logBspline(basic_1dimpdf):
     def __init__(self, alpha, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
         super().__init__(minval, maxval)
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
-        self.component_spline = logBspline_fromScipy(minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs)
+        self.component_spline = logBspline(minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs)
     
     def logZ(self):
         """
@@ -2322,7 +2322,7 @@ class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
     def __init__(self, alpha, minval, maxval, n_basis, degree, **coeffs_and_spacings):
         super().__init__(minval, maxval)
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
-        self.component_spline = logBspline_freeKnots_fromScipy(minval, maxval, n_basis, degree, **coeffs_and_spacings)
+        self.component_spline = logBspline_freeKnots(minval, maxval, n_basis, degree, **coeffs_and_spacings)
     
     def logZ(self):
         """
