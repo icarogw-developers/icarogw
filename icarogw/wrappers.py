@@ -6,7 +6,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw
-from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots, PowerLaw_logBspline_fromScipy, PowerLaw_logBspline_freeKnots_fromScipy
+from .priors import logBspline, PowerLaw_logBspline, logBspline_freeKnots, PowerLaw_logBspline_freeKnots
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 
@@ -2827,30 +2827,22 @@ class massprior_PowerLawlogBspline(pm_prob):
         )
 
 
-class massprior_PowerLawlogBspline_fromScipy(pm_prob):
-    def __init__(self, n_basis, degree, spacing, spline_variable):
+class massprior_logBspline_freeKnots(pm_prob):
+    def __init__(self, n_basis, degree):
         self.n_basis = n_basis
         self.degree = degree
-        if spacing in {'uniform', 'lin'}: self.spacing = 'lin'
-        elif spacing == 'log':            self.spacing = 'log'
-        else: raise KeyError("unknown splines spacing option. Choose from uniform, lin, log.")
-        if spline_variable in {'uniform', 'lin'}: self.spline_variable = 'lin'
-        elif spline_variable == 'log':            self.spline_variable = 'log'
-        else: raise KeyError("unknown splines variable option. Choose from uniform, lin, log.")
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
-        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
+        self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
+        self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters + self.nested_spacing_parameters
 
     def update(self, **kwargs):
-        coeffs = {c:kwargs[c] for c in self.coeffs_parameters}
-        self.prior = PowerLaw_logBspline_fromScipy(
+        coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.nested_spacing_parameters)}
+        self.prior = logBspline_freeKnots(
             minval = kwargs['mmin'],
             maxval = kwargs['mmax'],
-            alpha  = - kwargs['alpha'],
             n_basis=self.n_basis, 
             degree=self.degree, 
-            spacing=self.spacing,
-            spline_variable=self.spline_variable,
-            **coeffs
+            **coeffs_and_spacings
         )
 
 
@@ -2872,27 +2864,6 @@ class massprior_PowerLawlogBspline_freeKnots(pm_prob):
             degree=self.degree, 
             **coeffs_and_spacings
         )
-
-
-class massprior_PowerLawlogBspline_freeKnots_fromScipy(pm_prob):
-    def __init__(self, n_basis, degree):
-        self.n_basis = n_basis
-        self.degree = degree
-        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
-        self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
-        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters + self.nested_spacing_parameters
-
-    def update(self, **kwargs):
-        coeffs_and_spacings = {cs:kwargs[cs] for cs in (self.coeffs_parameters + self.nested_spacing_parameters)}
-        self.prior = PowerLaw_logBspline_freeKnots_fromScipy(
-            minval = kwargs['mmin'],
-            maxval = kwargs['mmax'],
-            alpha  = - kwargs['alpha'],
-            n_basis=self.n_basis, 
-            degree=self.degree, 
-            **coeffs_and_spacings
-        )
-
 
 
 class massprior_3PL_globmax(pm_prob):
