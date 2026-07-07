@@ -2233,11 +2233,12 @@ class PowerLaw_logBspline(basic_1dimpdf):
 
 class logBspline_freeKnots(basic_1dimpdf):
 
-    def __init__(self, minval, maxval, n_basis, degree, **coeffs_and_nested_spacings):
+    def __init__(self, minval, maxval, n_basis, degree, spacing, **coeffs_and_nested_spacings):
         super().__init__(minval, maxval)
         
         self.degree = degree
         self.n_basis = n_basis
+        self.spacing = spacing
 
         self.coeffs = np.asarray([0.0] + [coeffs_and_nested_spacings[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
         self.nested_spacings = np.asarray([coeffs_and_nested_spacings[f'z{i}'] for i in range(1, self.n_basis - self.degree)])
@@ -2261,8 +2262,16 @@ class logBspline_freeKnots(basic_1dimpdf):
         if np.any(self.cumulative_spacings > 1.): 
             raise ValueError("knots positions exceed distribution support range. Make sure knots spacings add up to <= 1.")
         # Building a clamped knots sequence (i.e. repeated end knots values)
-        interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
-        t_start = np.repeat(self.minval, self.degree + 1)
+        if self.spacing == 'lin':
+            interior = self.minval + self.cumulative_spacings * (self.maxval - self.minval)
+        elif self.spacing == 'log':
+            log_minval, log_maxval = np.log(self.minval), np.log(self.maxval)
+            log_interior = log_minval + self.cumulative_spacings * (log_maxval - log_minval)
+            interior = np.exp(log_interior)
+        else:
+            raise ValueError(f"Invalid '{self.spacing}' spacing option. Please choose from: log, lin.")
+        # Contrary to the lin/log spaced knots version, interior does not contain the end knots.
+        t_start = np.repeat(self.minval, self.degree + 1) 
         t_end = np.repeat(self.maxval, self.degree + 1)
         self.t = np.concatenate([t_start, interior, t_end])
         # Building x grid for normalisation
@@ -2319,10 +2328,10 @@ class logBspline_freeKnots(basic_1dimpdf):
 
 class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
 
-    def __init__(self, alpha, minval, maxval, n_basis, degree, **coeffs_and_spacings):
+    def __init__(self, alpha, minval, maxval, n_basis, degree, spacing, **coeffs_and_spacings):
         super().__init__(minval, maxval)
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
-        self.component_spline = logBspline_freeKnots(minval, maxval, n_basis, degree, **coeffs_and_spacings)
+        self.component_spline = logBspline_freeKnots(minval, maxval, n_basis, degree, spacing, **coeffs_and_spacings)
     
     def logZ(self):
         """

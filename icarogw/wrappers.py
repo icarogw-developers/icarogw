@@ -2828,9 +2828,10 @@ class massprior_PowerLawlogBspline(pm_prob):
 
 
 class massprior_logBspline_freeKnots(pm_prob):
-    def __init__(self, n_basis, degree):
+    def __init__(self, n_basis, degree, spacing):
         self.n_basis = n_basis
         self.degree = degree
+        self.spacing = spacing
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
         self.population_parameters = ['mmin', 'mmax'] + self.coeffs_parameters + self.nested_spacing_parameters
@@ -2842,14 +2843,16 @@ class massprior_logBspline_freeKnots(pm_prob):
             maxval = kwargs['mmax'],
             n_basis=self.n_basis, 
             degree=self.degree, 
+            spacing=self.spacing, 
             **coeffs_and_spacings
         )
 
 
 class massprior_PowerLawlogBspline_freeKnots(pm_prob):
-    def __init__(self, n_basis, degree):
+    def __init__(self, n_basis, degree, spacing):
         self.n_basis = n_basis
         self.degree = degree
+        self.spacing = spacing
         self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
         self.nested_spacing_parameters = [f'z{i}' for i in range(1, self.n_basis - self.degree)]
         self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters + self.nested_spacing_parameters
@@ -2862,6 +2865,7 @@ class massprior_PowerLawlogBspline_freeKnots(pm_prob):
             alpha  = - kwargs['alpha'],
             n_basis=self.n_basis, 
             degree=self.degree, 
+            spacing=self.spacing, 
             **coeffs_and_spacings
         )
 
