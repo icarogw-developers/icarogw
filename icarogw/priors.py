@@ -2382,3 +2382,134 @@ class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
         y_interp = xp.asarray(y_interp)
 
         return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class logBspline_fixedKnots(basic_1dimpdf):
+
+    def __init__(self, n_basis, degree, knots, **coeffs):
+        super().__init__(knots[0], knots[-1])
+        
+        self.degree = degree
+        self.n_basis = n_basis
+
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+        self.unclamped_t = np.array(knots)
+
+        self._setup_grid_and_knots()
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        t_start = np.repeat(self.unclamped_t[0], self.degree)
+        t_end = np.repeat(self.unclamped_t[-1], self.degree)
+        self.t = np.concatenate([t_start, self.unclamped_t, t_end])
+        # Building x grid for normalisation
+        self._x_grid = np.linspace(self.minval, self.maxval, 1000)
+        self._s_grid = sn.interpolate.BSpline(self.t, self.coeffs, self.degree)(self._x_grid)
+
+    def eval_spline(self, x):
+        """
+        Evaluate the Bspline at x using scipy interpolant
+        """
+        xp = get_module_array(x)
+        xn = get_module_array_scipy(x)
+        t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
+        interpolant = xn.interpolate.BSpline(t, coeffs, self.degree)
+        return interpolant(x)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_max = np.max(self._s_grid)
+        
+        integrand = np.exp(self._s_grid - s_max)
+        Z = np.trapezoid(integrand, self._x_grid)
+
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class PowerLaw_logBspline_fixedKnots(basic_1dimpdf):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, knots, **coeffs_and_spacings):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline_fixedKnots(n_basis, degree, knots, **coeffs_and_spacings)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_grid = self.component_spline._s_grid
+
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        Z = np.trapezoid(integrand, self.component_spline._x_grid)
+
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
+        )
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
