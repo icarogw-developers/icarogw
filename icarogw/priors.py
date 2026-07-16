@@ -2377,8 +2377,8 @@ class PowerLaw_logBspline_freeKnots(basic_1dimpdf):
 
 class logBspline_fixedKnots(basic_1dimpdf):
 
-    def __init__(self, n_basis, degree, knots, **coeffs):
-        super().__init__(knots[0], knots[-1])
+    def __init__(self, minval, maxval, n_basis, degree, knots, **coeffs):
+        super().__init__(minval, maxval)
         
         self.degree = degree
         self.n_basis = n_basis
@@ -2450,10 +2450,10 @@ class logBspline_fixedKnots(basic_1dimpdf):
 
 class PowerLaw_logBspline_fixedKnots(basic_1dimpdf):
 
-    def __init__(self, alpha, minval, maxval, n_basis, degree, knots, **coeffs_and_spacings):
+    def __init__(self, alpha, minval, maxval, n_basis, degree, knots, **coeffs):
         super().__init__(minval, maxval)
         self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
-        self.component_spline = logBspline_fixedKnots(n_basis, degree, knots, **coeffs_and_spacings)
+        self.component_spline = logBspline_fixedKnots(minval=minval, maxval=maxval, n_basis=n_basis, degree=degree, knots=knots, **coeffs)
     
     def logZ(self):
         """
