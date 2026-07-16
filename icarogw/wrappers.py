@@ -3330,3 +3330,147 @@ class massprior_PowerLawlogBspline(pm_prob):
             spline_variable=self.spline_variable,
             **coeffs
         )
+
+
+
+
+
+
+
+class massratio_EvolvingGaussian():
+    '''
+    Definition
+    ----------
+    Conditional mass-ratio distribution
+    p(q | m1) = TruncatedGaussian in [0, 1]
+    
+    Parameters
+    ----------
+    mu = mu_0 (m1/m0)^a
+    sigma = sigma_0 (m1/m0)^b
+    TruncatedGaussiaparameters
+    '''
+    def __init__(self, mw):
+        self.population_parameters= ['mu_0', 'm0', 'a','b','sigma_0']
+               
+    def update(self,**kwargs):
+        
+        self.mu_0, self.m0 = kwargs['mu_0'], kwargs['m0']
+        self.sigma_0, self.a, self.b = kwargs['sigma_0'], kwargs['a'], kwargs['b']
+        
+    def log_pdf(self,q, mass_1_source):
+
+        mass_2_source = q*mass_1_source
+                
+        mu = self.mu_0 * ((mass_1_source/self.m0)**self.a)
+        sigma = self.sigma_0 * ((mass_1_source/self.m0)**self.b)
+
+        log_out = log_truncnorm_pdf(q, mu, sigma, 0.0, 1.0)
+    
+        return log_out
+        
+    def pdf(self,mass_1_source,mass_2_source):
+        xp = get_module_array(mass_1_source)
+        return xp.exp(self.log_pdf(mass_1_source,mass_2_source))
+
+
+
+
+class spinprior_Gaussian_to_Gaussian_windowGaussian():
+    '''
+    Wrapper for the evolving spin model chi1-m1
+    p(chi_1 | m_1) = w(m_1) * TruncatedGaussian_lowpspinpopulation + (1-w(m_1)) * TruncatedGaussian_highspinpopulation
+    with w(m_1) = - (Guassian window function normalized at its maximum) + 1
+    '''
+    def __init__(self, mw):
+        self.population_parameters= ['mu_chi_low', 'sigma_chi_low', 'mu_chi_high','sigma_chi_high', 'mu_t', 'sigma_t']
+               
+    def update(self,**kwargs):
+        
+        self.mu_chi_low, self.sigma_chi_low = kwargs['mu_chi_low'], kwargs['sigma_chi_low']
+        self.mu_chi_high, self.sigma_chi_high = kwargs['mu_chi_high'], kwargs['sigma_chi_high']
+        self.mu_t, self.sigma_t = kwargs['mu_t'], kwargs['sigma_t']
+    
+    def calculate_gaussian(self, x):
+        '''
+        only for window function
+        '''
+        exp = -0.5 * ((x - self.mu_t) / self.sigma_t) ** 2
+        return (1 / (self.sigma_t * np.sqrt(2 * np.pi))) * np.exp(exp)
+
+        
+    def log_pdf(self,mass_1_source,chi_1):
+        
+        xp = get_module_array(chi_1)
+        
+        gaussian = self.calculate_gaussian(mass_1_source)
+        wz = -(gaussian * (xp.sqrt(2*np.pi) * self.sigma_t)) + 1
+        
+        pdf_low = xp.exp(log_truncnorm_pdf(chi_1, self.mu_chi_low, self.sigma_chi_low, 0.0, 1.0))
+        pdf_high = xp.exp(log_truncnorm_pdf(chi_1, self.mu_chi_high, self.sigma_chi_high, 0.0, 1.0))
+        out = wz*pdf_low+(1-wz)*pdf_high
+        
+        return xp.log(out)
+        
+    def pdf(self,mass_1_source,chi_1):
+        xp = get_module_array(mass_1_source)
+        return xp.exp(self.log_pdf(mass_1_source,chi_1))
+
+
+
+
+
+
+
+class spinprior_Gaussian_to_Gaussian_windowGaussian_2():
+    '''
+    Wrapper for the evolving spin model chi1-m1
+    p(chi_1 | m_1) = w(m_1) * TruncatedGaussian_lowpspinpopulation + (1-w(m_1)) * TruncatedGaussian_highspinpopulation
+    with w(m_1) = - sigma_t * sqrt(2pi) * (Guassian window function) + 1
+    '''
+    def __init__(self, mw):
+        self.population_parameters= ['mu_chi_low_1', 'sigma_chi_low_1', 'mu_chi_high_1','sigma_chi_high_1', 'mu_t', 'sigma_t', 'mu_chi_2', 'sigma_chi_2']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+               
+    def update(self,**kwargs):
+        
+        self.mu_chi_low_1, self.sigma_chi_low_1 = kwargs['mu_chi_low_1'], kwargs['sigma_chi_low_1']
+        self.mu_chi_high_1, self.sigma_chi_high_1 = kwargs['mu_chi_high_1'], kwargs['sigma_chi_high_1']
+        self.mu_t, self.sigma_t = kwargs['mu_t'], kwargs['sigma_t']
+        self.mu_chi_2, self.sigma_chi_2 = kwargs['mu_chi_2'], kwargs['sigma_chi_2']
+
+        
+    def calculate_gaussian(self, x):
+        '''
+        only for window function
+        '''
+        exp = -0.5 * ((x - self.mu_t) / self.sigma_t) ** 2
+        return (1 / (self.sigma_t * np.sqrt(2 * np.pi))) * np.exp(exp)
+
+        
+    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2, mass_1_source, mass_2_source):
+        
+        xp = get_module_array(chi_1)
+
+        log_angular_part = xp.logaddexp(xp.log1p(-self.csi_spin)+xp.log(0.25),
+                                    xp.log(self.csi_spin)+self.aligned_pdf.log_pdf(cos_t_1)+self.aligned_pdf.log_pdf(cos_t_2))
+        
+        gaussian = self.calculate_gaussian(mass_1_source)
+        wz = -(gaussian * (xp.sqrt(2*np.pi) * self.sigma_t)) + 1
+        
+        pdf_low = xp.exp(log_truncnorm_pdf(chi_1, self.mu_chi_low_1, self.sigma_chi_low_1, 0.0, 1.0))
+        pdf_high = xp.exp(log_truncnorm_pdf(chi_1, self.mu_chi_high_1, self.sigma_chi_high_1, 0.0, 1.0))
+        log_pdf_1 = xp.log(wz*pdf_low+(1-wz)*pdf_high)
+
+        log_pdf_2 = log_truncnorm_pdf(chi_2, self.mu_chi_2, self.sigma_chi_2, 0.0, 1.0)
+
+        return log_pdf_1 + log_pdf_2 + log_angular_part
+        
+    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
+        xp = get_module_array(mass_1_source)
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source))
+
+
+
+
+

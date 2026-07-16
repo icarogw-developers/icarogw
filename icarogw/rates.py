@@ -1937,3 +1937,63 @@ class CBC_rate_m1m2_z_chieffz(object):
         
     def log_rate_injections(self,prior,**kwargs):
         return self.log_rate_PE(prior,**kwargs)
+
+
+
+
+
+
+class CBC_rate_m1q_z_spins(object):
+    '''
+    This rate is specifically built for an inference with a pop model built as:
+    p_pop = p(m1,q)p(z)p(chi1,m1) 
+    '''
+    def __init__(self,cosmology_wrapper,mass_wrapper,rate_wrapper,spin_wrapper,q_wrapper,
+                 scale_free=False):
+        self.cw = cosmology_wrapper
+        self.mw = mass_wrapper
+        self.rw = rate_wrapper
+        self.sw = spin_wrapper
+        self.qw = q_wrapper
+        self.scale_free = scale_free
+
+        if scale_free:
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters+self.qw.population_parameters
+        else: 
+            self.population_parameters = self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters+self.sw.population_parameters+self.qw.population_parameters+['R0']
+
+        event_parameters = ['mass_1','mass_ratio','chi_1','chi_2','cos_t_1','cos_t_2','luminosity_distance']
+    
+        self.PEs_parameters = event_parameters.copy()
+        self.injections_parameters = event_parameters.copy()
+
+    def update(self,**kwargs):
+        self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
+        self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
+        self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
+        self.sw.update(**{key: kwargs[key] for key in self.sw.population_parameters})
+        self.qw.update(**{key: kwargs[key] for key in self.qw.population_parameters})
+            
+        if not self.scale_free:
+            self.R0 = kwargs['R0']
+
+    def log_rate_PE(self,prior,**kwargs):
+        xp = get_module_array(prior)
+        z   = self.cw.cosmology.dl2z(kwargs['luminosity_distance'])
+        m1s = kwargs['mass_1']/(1.+z)
+        m2s = kwargs['mass_ratio']*kwargs['mass_1']/(1.+z)
+
+        log_dVc_dz   = xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
+        log_prior    = xp.log(prior)
+        log_jacobian = xp.log(detector2source_jacobian_q(z,self.cw.cosmology)) + xp.log1p(z)
+        log_pop      = self.mw.log_pdf(m1s)+self.qw.log_pdf(kwargs['mass_ratio'],m1s)+self.rw.log_evaluate(z)+self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
+        log_weights  = log_pop + log_dVc_dz - log_prior - log_jacobian
+
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+        return log_out
+        
+    def log_rate_injections(self,prior,**kwargs):
+        return self.log_rate_PE(prior,**kwargs)
