@@ -1180,9 +1180,9 @@ class CBC_HI_vanilla_rate(object):
         self.PE_average = PE_average
         
         if scale_free:
-            self.population_parameters =  self.cw.population_parameters+self.rw.population_parameters
+            self.population_parameters =  self.cw.population_parameters+self.rw.population_parameters+self.HI_map.population_parameters
         else:
-            self.population_parameters =  self.cw.population_parameters+self.rw.population_parameters + ['RHI']
+            self.population_parameters =  self.cw.population_parameters+self.rw.population_parameters+self.HI_map.population_parameters + ['RHI']
             
         event_parameters = ['luminosity_distance','sky_indices']
         
