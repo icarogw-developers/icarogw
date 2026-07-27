@@ -7,7 +7,7 @@ from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, cond
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
 from .priors import TriplePowerLaw, QuadruplePowerLaw
-from .priors import logBspline, PowerLaw_logBspline
+from .priors import logBspline, PowerLaw_logBspline, PowerLaw_logBspline_fixedKnots
 import copy
 from astropy.cosmology import FlatLambdaCDM, FlatwCDM, Flatw0waCDM
 from scipy.special import expit
@@ -3329,5 +3329,26 @@ class massprior_PowerLawlogBspline(pm_prob):
             degree=self.degree, 
             spacing=self.spacing,
             spline_variable=self.spline_variable,
+            **coeffs
+        )
+
+
+class massprior_PowerLawlogBspline_fixedKnots(pm_prob):
+    def __init__(self, n_basis, degree, knots):
+        self.n_basis = n_basis
+        self.degree = degree
+        self.knots = knots
+        self.coeffs_parameters = [f'c{i}' for i in range(1, self.n_basis-1)]
+        self.population_parameters = ['mmin', 'mmax', 'alpha'] + self.coeffs_parameters
+
+    def update(self, **kwargs):
+        coeffs = {cs:kwargs[cs] for cs in (self.coeffs_parameters)}
+        self.prior = PowerLaw_logBspline_fixedKnots(
+            minval = kwargs['mmin'],
+            maxval = kwargs['mmax'],
+            alpha  = - kwargs['alpha'],
+            n_basis=self.n_basis, 
+            degree=self.degree, 
+            knots=self.knots, 
             **coeffs
         )
