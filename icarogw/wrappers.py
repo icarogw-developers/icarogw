@@ -1,7 +1,8 @@
 from .cupy_pal import get_module_array, get_module_array_scipy, np, _set_xp_and_dtype
 from .cosmology import alphalog_astropycosmology, cM_astropycosmology, extraD_astropycosmology, Xi0_astropycosmology, astropycosmology, eps0_astropycosmology
 from .cosmology import  md_rate, md_gamma_rate, powerlaw_rate, beta_rate, beta_rate_line
-from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, PowerLaw, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
+from .priors import LowpassSmoothedProb, LowpassSmoothedProbEvolving, BetaDistribution, TruncatedBetaDistribution, TruncatedGaussian, Bivariate2DGaussian, SmoothedPlusDipProb, BrokenPowerLawMultiPeak
+from .priors import PowerLaw as PL_p
 from .priors import PowerLawGaussian, BrokenPowerLaw, PowerLawTwoGaussians, conditional_2dimpdf, conditional_2dimz_pdf, piecewise_constant_2d_distribution_normalized,paired_2dimpdf
 from .priors import PowerLawStationary, PowerLawLinear, GaussianStationary, GaussianLinear, _mixed_linear_function, _mixed_double_sigmoid_function
 from .priors import BrokenPowerLawTripleMultiPeak
@@ -169,7 +170,7 @@ class massratio_PowerlawSmooth(object):
     def pdf(self, mass_ratio, mass_1):
         mmin = self.mw.prior.minval
         qmin = mmin / mass_1 
-        p_q = PowerLaw(qmin, 1., self.alpha_q)
+        p_q = PL_p(qmin, 1., self.alpha_q)
         p_s = onesided_taperwindow_smoothing(mass=mass_1*mass_ratio,
                                         mmin = mmin,
                                         mmax = mass_1,
@@ -211,7 +212,7 @@ class mass_ratio_prior_Powerlaw(pm_prob):
     def __init__(self):
         self.population_parameters=['alpha_q']
     def update(self,**kwargs):
-        self.prior=PowerLaw(0.,1.,kwargs['alpha_q'])
+        self.prior=PL_p(0.,1.,kwargs['alpha_q'])
 
 class lowSmoothedwrapper(pm_prob):
    def __init__(self, mw):
@@ -240,7 +241,7 @@ class massprior_PowerLaw(pm_prob):
     def __init__(self):
         self.population_parameters=['alpha','mmin','mmax']
     def update(self,**kwargs):
-        self.prior=PowerLaw(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'])
+        self.prior=PL_p(kwargs['mmin'],kwargs['mmax'],-kwargs['alpha'])
         
 #LVK reviewed
 class massprior_PowerLawPeak(pm_prob):
@@ -298,7 +299,7 @@ class m1m2_conditioned(pm1m2_prob):
     def update(self,**kwargs):
         self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters})
         p1 = self.wrapper_m.prior
-        p2 = PowerLaw(kwargs['mmin'],kwargs['mmax'],kwargs['beta'])
+        p2 = PL_p(kwargs['mmin'],kwargs['mmax'],kwargs['beta'])
         self.prior=conditional_2dimpdf(p1,p2)
 
 #LVK reviewed
@@ -310,7 +311,7 @@ class m1m2_conditioned_lowpass_m2(pm1m2_prob):
     def update(self,**kwargs):
         self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters})
         p1 = self.wrapper_m.prior
-        p2 = LowpassSmoothedProb(PowerLaw(kwargs['mmin'],kwargs['mmax'],kwargs['beta']),kwargs['delta_m'])
+        p2 = LowpassSmoothedProb(PL_p(kwargs['mmin'],kwargs['mmax'],kwargs['beta']),kwargs['delta_m'])
         # self.prior=conditional_2dimz_pdf(p1,p2)
         self.prior=conditional_2dimpdf(p1,p2)
 
@@ -322,7 +323,7 @@ class m1m2_conditioned_lowpass(pm1m2_prob):
     def update(self,**kwargs):
         self.wrapper_m.update(**{key:kwargs[key] for key in self.wrapper_m.population_parameters})
         p1 = LowpassSmoothedProb(self.wrapper_m.prior,kwargs['delta_m'])
-        p2 = LowpassSmoothedProb(PowerLaw(kwargs['mmin'],kwargs['mmax'],kwargs['beta']),kwargs['delta_m'])
+        p2 = LowpassSmoothedProb(PL_p(kwargs['mmin'],kwargs['mmax'],kwargs['beta']),kwargs['delta_m'])
         self.prior=conditional_2dimpdf(p1,p2)
 
 
