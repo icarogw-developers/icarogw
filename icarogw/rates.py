@@ -1986,7 +1986,7 @@ class CBC_rate_m1q_z_spins(object):
         log_dVc_dz   = xp.log(self.cw.cosmology.dVc_by_dzdOmega_at_z(z)*4*xp.pi)
         log_prior    = xp.log(prior)
         log_jacobian = xp.log(detector2source_jacobian_q(z,self.cw.cosmology)) + xp.log1p(z)
-        log_pop      = self.mw.log_pdf(m1s)+self.qw.log_pdf(kwargs['mass_ratio'],m1s)+self.rw.log_evaluate(z)+self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
+        log_pop      = self.mw.log_pdf(m1s)+self.qw.log_pdf(kwargs['mass_ratio'],m1s)+self.rw.log_evaluate(z)+self.sw.log_pdf(m1s,**{key:kwargs[key] for key in self.sw.event_parameters})
         log_weights  = log_pop + log_dVc_dz - log_prior - log_jacobian
 
         if not self.scale_free:
