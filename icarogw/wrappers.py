@@ -3387,7 +3387,7 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
     '''
     def __init__(self, mw):
         self.population_parameters= ['mu_chi_low_1', 'sigma_chi_low_1', 'mu_chi_high_1','sigma_chi_high_1', 'mu_t', 'sigma_t', 'mu_chi_2', 'sigma_chi_2']
-        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2']
+        self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2', 'mass_1_source']
                
     def update(self,**kwargs):
         
@@ -3395,7 +3395,8 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
         self.mu_chi_high_1, self.sigma_chi_high_1 = kwargs['mu_chi_high_1'], kwargs['sigma_chi_high_1']
         self.mu_t, self.sigma_t = kwargs['mu_t'], kwargs['sigma_t']
         self.mu_chi_2, self.sigma_chi_2 = kwargs['mu_chi_2'], kwargs['sigma_chi_2']
-
+        self.csi_spin = kwargs['csi_spin']
+        self.aligned_pdf = TruncatedGaussian(1.,kwargs['sigma_t'],-1.,1.)
         
     def calculate_gaussian(self, x):
         '''
@@ -3405,7 +3406,7 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
         return (1 / (self.sigma_t * np.sqrt(2 * np.pi))) * np.exp(exp)
 
         
-    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2, mass_1_source, mass_2_source):
+    def log_pdf(self,chi_1,chi_2,cos_t_1,cos_t_2, mass_1_source,**kwargs):
         
         xp = get_module_array(chi_1)
 
@@ -3423,9 +3424,9 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
 
         return log_pdf_1 + log_pdf_2 + log_angular_part
         
-    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source):
+    def pdf(self,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,**kwargs):
         xp = get_module_array(mass_1_source)
-        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,mass_2_source))
+        return xp.exp(self.log_pdf(chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source))
 
 
 
