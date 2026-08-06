@@ -3386,7 +3386,11 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
     with w(m_1) = - sigma_t * sqrt(2pi) * (Guassian window function) + 1
     '''
     def __init__(self, mw):
+<<<<<<< HEAD
         self.population_parameters= ['mu_chi_low_1', 'sigma_chi_low_1', 'mu_chi_high_1','sigma_chi_high_1', 'mu_t', 'sigma_t', 'mu_chi_2', 'sigma_chi_2', 'csi_spin']
+=======
+        self.population_parameters= ['mu_chi_low_1', 'sigma_chi_low_1', 'mu_chi_high_1','sigma_chi_high_1', 'mu_t', 'sigma_t', 'mu_chi_2', 'sigma_chi_2','csi_spin']
+>>>>>>> fd6a6b4b1c39abc05dfd040db7491d56ad73a962
         self.event_parameters=['chi_1','chi_2','cos_t_1','cos_t_2', 'mass_1_source']
                
     def update(self,**kwargs):
