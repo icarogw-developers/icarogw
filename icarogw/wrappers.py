@@ -3424,7 +3424,7 @@ class spinprior_Gaussian_to_Gaussian_windowGaussian():
 
         return log_pdf_1 + log_pdf_2 + log_angular_part
         
-    def pdf(self,mass_1_source,chi_1,chi_2,cos_t_1,cos_t_2,mass_1_source,**kwargs):
+    def pdf(self,mass_1_source,chi_1,chi_2,cos_t_1,cos_t_2,**kwargs):
         xp = get_module_array(mass_1_source)
         return xp.exp(self.log_pdf(mass_1_source,chi_1,chi_2,cos_t_1,cos_t_2,**kwargs))
 
