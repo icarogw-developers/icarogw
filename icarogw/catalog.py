@@ -153,7 +153,7 @@ def remove_nans_pixelated_files(outfolder,pixel,fields_to_take,grouping):
 def calculate_mthr_pixelated_files(outfolder,
                                    pixel,
                                    apparent_magnitude_flag,grouping,nside_mthr,
-                                   mthr_percentile=50, msat=-np.inf,mthr_fixed=None):
+                                   mthr_percentile=50, msat=-np.inf,mthr_fixed=+np.inf):
     '''
     The function calculates the apparent magnitude threshold for each pixelated file
 
@@ -210,19 +210,12 @@ def calculate_mthr_pixelated_files(outfolder,
                         m_selected ,othercat['catalog'][apparent_magnitude_flag][othercat[grouping]['not_NaN_indices'][:]])
                 os.remove(os.path.join(outfolder,'pixel_{:d}_{:d}.hdf5'.format(pix,pixel)))
                 
-            if mthr_fixed is not None:
-                if len(m_selected) != 0:
-                    mthr = mthr_fixed
-                else:
-                    print(f'Pixel {pixel:d} is empty')
-                    mthr = -np.inf
-            else:
                 # If there is no valid galaxy with which to compute the threshold
-                if len(m_selected) != 0:
-                    mthr = np.percentile(m_selected, mthr_percentile)
-                else:
-                    print(f'Pixel {pixel:d} is empty')
-                    mthr = -np.inf
+            if len(m_selected) != 0:
+                mthr=min(mthr_fixed, np.percentile(m_selected, mthr_percentile))
+            else:
+                print(f'Pixel {pixel:d} is empty')
+                mthr = -np.inf
                 
             subcat.attrs['mthr_percentile'] = mthr_percentile
             subcat.attrs['nside_mthr'] = nside_mthr
@@ -542,7 +535,7 @@ def calculate_interpolant_files(outfolder,z_grid,pixel,grouping,subgrouping,
                         kcorr_arr = calc_kcorr(z_grid, k0 = cat['catalog']['K_r'][j] , dkbydz = cat['catalog']['dKbydz_r'][j] ,z0 = cat['catalog']['z'][j])
                     elif band=='W1-upglade':
                         kcorr_arr = calc_kcorr(z_grid, k0 = cat['catalog']['K_W1'][j] , dkbydz = cat['catalog']['dKbydz_W1'][j] ,z0 = cat['catalog']['z'][j])
-                    elif band=='r-DES':
+                    elif band=='r-DES' or band== 'r-DELVE':
                         kcorr_arr=calc_kcorr(z_grid, gr_color=cat['catalog']['gr_color'][j])
                     else:
                         kcorr_arr = calc_kcorr(z_grid)
@@ -588,6 +581,7 @@ class  icarogw_catalog(object):
         Minimum redshift of the observed catalog due to the saturation problem.
         If None, the catalog is assumed to start at the minimum redshift
         of the interpolation grid.
+    msat: saturation threshold
     '''
     
     def __init__(self,outfile,grouping,subgrouping, zsat=None, msat=None):
@@ -623,51 +617,67 @@ class  icarogw_catalog(object):
         dNgal_dzdOm_vals = []
         bg_vals = []
         loaded_sch = False
-        for pix in tqdm(self.sky_grid,desc='Initializing Schecter'):
-            idx = np.where(moc_pixels == pix)[0]
-            if len(idx) == 0:
-                continue
-            else:
-                with h5py.File(os.path.join(outfolder,'pixel_{:d}.hdf5'.format(filled_pixels[idx[0]]))) as pcat:
-                    band = pcat[self.grouping][self.subgrouping].attrs['band']
-                    epsilon = pcat[self.grouping][self.subgrouping].attrs['epsilon']
-                    self.band = band
-                    self.epsilon = epsilon
-                    self.calc_kcorr=kcorr(band)
-                    self.sch_fun=galaxy_MF(band=band)
-                    self.sch_fun.build_effective_number_density_interpolant(epsilon)
-                    # Initialize a cosmology with zmax at double the distance
-                    cosmology_proxy = astropycosmology(zmax=self.z_grid[-1]*2)
-                    cosmology_proxy.build_cosmology(Planck15)
-                    self.sch_fun.build_MF(cosmology_proxy)
-                    dl_proxy=cosmology_proxy.z2dl(self.z_grid)
-                    loaded_sch = True
-            if loaded_sch:
-                break
-
+        
         for pix in tqdm(self.sky_grid,desc='Bulding sky grid'):
             idx = np.where(moc_pixels == pix)[0]
     
             if len(idx) == 0:
                 # Empty pixel: fill with zeros and background
                 dNgal_dzdOm_vals.append(np.zeros_like(self.z_grid))
-                bg_vals.append(self.sch_fun.background_effective_galaxy_density(-np.inf*np.ones_like(self.z_grid),
-                        self.z_grid,Msat=None) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid))
+                bg_vals.append(
+                    self.sch_fun.background_effective_galaxy_density(
+                        -np.inf*np.ones_like(self.z_grid),
+                        self.z_grid,
+                        Msat=None
+                    ) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid)
+                )
             else:
                 # Populated pixel: load interpolant
                 pixel_file = os.path.join(outfolder, f'pixel_{filled_pixels[idx[0]]}.hdf5')
                 with h5py.File(pixel_file) as pcat:
-                    dNgal_dzdOm_vals.append(pcat[self.grouping][self.subgrouping]['vals_interpolant'][:])
+
+                    if not loaded_sch:                
+                        band = pcat[self.grouping][self.subgrouping].attrs['band']
+                        epsilon = pcat[self.grouping][self.subgrouping].attrs['epsilon']
+                        self.band = band
+                        self.epsilon = epsilon
+                        self.calc_kcorr=kcorr(band)
+                        self.sch_fun=galaxy_MF(band=band)
+                        self.sch_fun.build_effective_number_density_interpolant(epsilon)
+                        # Initialize a cosmology with zmax at double the distance
+                        cosmology_proxy = astropycosmology(zmax=self.z_grid[-1]*2)
+                        cosmology_proxy.build_cosmology(Planck15)
+                        self.sch_fun.build_MF(cosmology_proxy)
+                        dl_proxy=cosmology_proxy.z2dl(self.z_grid)
+                        loaded_sch = True
+
+                    
+                    dNgal_dzdOm_vals.append(
+                        pcat[self.grouping][self.subgrouping]['vals_interpolant'][:]
+                    )
     
-                    Mthr_array = self.calc_Mthr(self.z_grid,pix*np.ones_like(self.z_grid, dtype=int),
-                        cosmology_proxy,dl=dl_proxy)
+                    Mthr_array = self.calc_Mthr(
+                        self.z_grid,
+                        pix*np.ones_like(self.z_grid, dtype=int),
+                        cosmology_proxy,
+                        dl=dl_proxy
+                    )
                     if self.msat is None:
-                        bg_vals.append(self.sch_fun.background_effective_galaxy_density(Mthr_array,
-                                self.z_grid) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid))
+                        bg_vals.append(
+                            self.sch_fun.background_effective_galaxy_density(
+                                Mthr_array,
+                                self.z_grid
+                            ) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid)
+                        )
                     else:
                         Msat_array = m2M(np.array([self.msat]), cosmology_proxy.z2dl(self.z_grid), 0) 
-                        bg_vals.append(self.sch_fun.background_effective_galaxy_density(Mthr_array,self.z_grid,
-                            Msat_array) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid))
+                        bg_vals.append(
+                        self.sch_fun.background_effective_galaxy_density(
+                            Mthr_array,
+                            self.z_grid,
+                            Msat_array
+                        ) * cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid)
+                    )
     
         # --- Save results as arrays ---
         self.dNgal_dzdOm_vals = np.column_stack(dNgal_dzdOm_vals)
@@ -682,11 +692,6 @@ class  icarogw_catalog(object):
         self.sch_fun.build_MF(cosmology_proxy)
         self.bg_vals_av = self.sch_fun.background_effective_galaxy_density(-np.inf*np.ones_like(self.z_grid),self.z_grid, Msat=None) *cosmology_proxy.dVc_by_dzdOmega_at_z(self.z_grid)
         
-
-    def save_to_hdf5_file(self):
-        '''
-        Saves the interpolants and everything neeeded in a single hdf5 file
-        '''
 
     def save_to_hdf5_file(self):
         """
@@ -1560,12 +1565,12 @@ class kcorr(object):
         '''
         self.band=band
         if self.band not in ['W1-glade+','K-glade+','bJ-glade+','W1-upglade','g-upglade','r-upglade', 
-                             'vis-euclid', 'vis-q1-euclid', 'y-euclid','h-euclid','j-euclid', 'y-euclid', 'r-DES']:
+                             'vis-euclid', 'vis-euclid-evo','vis-q1-euclid', 'vis-q1-euclid-evo', 'y-euclid','h-euclid','j-euclid', 'y-euclid', 'r-DES', 'r-DELVE']:
             raise ValueError('Band not known please use either {:s}'.format(' '.join(['W1-glade+','K-glade+','bJ-glade+',
                                                                                      'W1-upglade','g-upglade','r-upglade',
-                                                                                      'vis-euclid', 'vis-q1-euclid','y-euclid',
+                                                                                      'vis-euclid', 'vis-q1-euclid','vis-euclid-evo','vis-q1-euclid-evo','y-euclid',
                                                                                       'h-euclid',
-                                                                                      'j-euclid', 'y-euclid', 'r-DES'])))
+                                                                                      'j-euclid', 'y-euclid', 'r-DES', 'r-DELVE'])))
     def __call__(self,z, k0 = None, dkbydz=None, z0 = None, gr_color=None):
         '''
         Evaluates the K-corrections at a given redshift, See Eq. 2 of https://arxiv.org/abs/astro-ph/0210394
@@ -1599,9 +1604,9 @@ class kcorr(object):
             k_corr=(z+6*xp.power(z,2.))/(1+20.*xp.power(z,3.))
         elif (self.band == 'W1-upglade') | (self.band == 'g-upglade') | (self.band == 'r-upglade'):
             k_corr = k0+dkbydz*(z-z0)
-        elif self.band == 'r-DES':
+        elif self.band == 'r-DES' or self.band== 'r-DELVE':
             k_corr= calc_kcorr_chil_r(z, gr_color)
-        elif self.band in ('j-euclid', 'y-euclid', 'h-euclid', 'vis-euclid', 'vis-q1-euclid'):
+        elif self.band in ('j-euclid', 'y-euclid', 'h-euclid', 'vis-euclid', 'vis-q1-euclid', 'vis-euclid-evo', 'vis-q1-euclid-evo'):
             #no correction for euclid bands
             k_corr = xp.zeros_like(z)
         return k_corr
