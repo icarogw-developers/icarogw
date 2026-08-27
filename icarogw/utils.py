@@ -34,23 +34,26 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw',memory=10000,cpus=1,disk=10000):
             f.write('\n')
             f.write('cd ${MYJOB_DIR}')
             f.write('\n')
-            f.write('python '+file)
+            f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python '+file)
             f.close()
 
             f = open(home_folder+fname+'.sub', 'w')
             f.write('universe = vanilla\n')
-            f.write('getenv = True\n')
             f.write('executable = '+home_folder+fname+'.sh\n')
             f.write('accounting_group = '+agroup+'\n')
             f.write('accounting_group_user = '+uname)
             f.write('\n')
-            f.write('request_memory ='+str(memory)+'M\n')
+            f.write('request_memory ='+str(memory)+'\n')
             f.write('request_cpus ='+str(cpus)+'\n')
-            f.write('request_disk ='+str(disk)+'M\n')    
+            f.write('request_disk ='+str(disk)+'\n')    
             f.write('output = '+home_folder+fname+'.stdout\n')
             f.write('error = '+home_folder+fname+'.stderr\n')
             f.write('log = '+home_folder+fname+'.log\n')
+            f.write('stream_output = True\n')
+            f.write('stream_error = True\n')
             f.write('Requirements = TARGET.Dual =!= True\n')
+            f.write('MY.flock_local = True\n')
+            f.write('MY.DESIRED_Sites = "none"\n')
             f.write('queue\n')
             f.close()
             _os.system('chmod a+x '+home_folder+'*.sh')
@@ -142,12 +145,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python make_pixel_files.py')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python make_pixel_files.py')
     f.close()
 
     f = open(os.path.join(home_folder,'make_pixel_files.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = make_pixel_files.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -158,12 +160,13 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('output = logs/make_pixel_files.stdout \n')
     f.write('error = logs/make_pixel_files.stderr \n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue\n')
     f.close()
 
 
-def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, fields_to_take, grouping,apparent_magnitude_flag,nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,NumJobs,uname='sarah.ferraiuolo',
-agroup='ligo.dev.o4.cbc.hubble.icarogw'):
+def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, fields_to_take, grouping,apparent_magnitude_flag,nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,NumJobs,msat=None, mthr_fixed=None, uname='sarah.ferraiuolo',agroup='ligo.dev.o4.cbc.hubble.icarogw'):
 
     '''
     Writes the python scripts and condor files to removes NaNs and calculate apparent magnitude threshold cut for galaxy catalog
@@ -235,12 +238,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python clear_NaNs.py $1 $2')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python clear_NaNs.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'clear_NaNs.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = clear_NaNs.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -252,7 +254,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
 
     f.write('output = logs/clear_nans_$(Item)_$(Item2).stdout \n')
     f.write('error = logs/clear_nans_$(Item)_$(Item2).stderr \n')
+    f.write('stream_output = True\n')
+    f.write('stream_error = True\n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')    
     f.write('queue Item, Item2 from {:s}\n'.format(os.path.join(home_folder,'queue_NaN.txt')))
     f.close()
 
@@ -276,13 +282,15 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
         fp.write('Nintegration =  {:d} \n'.format(Nintegration))
     fp.write('Numsigma =  {:d} \n'.format(Numsigma))
     fp.write('zcut =  {:f} \n'.format(zcut))
+    fp.write('msat = {:s} \n'.format(str(msat)))
+    fp.write('mthr_fixed = {:s} \n'.format(str(mthr_fixed)))
     fp.write('bot_pix = int(sys.argv[1])\n')
     fp.write('top_pix = int(sys.argv[2])\n')
     fp.write('filled_pixels = np.genfromtxt(\'{:s}\').astype(int) \n'.format(
         os.path.join(outfolder,'filled_pixels.txt')))
     fp.write('filled_pixels = filled_pixels[bot_pix:top_pix] \n')
     fp.write('for pix in tqdm(filled_pixels,desc=\'Calculating apparent magnitude\'):\n')
-    fp.write('\ticarogw.catalog.calculate_mthr_pixelated_files(outfolder,pix,apparent_magnitude_flag,grouping,nside_mthr,mthr_percentile=mthr_percentile)\n')
+    fp.write('\ticarogw.catalog.calculate_mthr_pixelated_files(outfolder,pix,apparent_magnitude_flag,grouping,nside_mthr,mthr_percentile=mthr_percentile, msat=msat, mthr_fixed=mthr_fixed)\n')
     fp.write('for pix in tqdm(filled_pixels,desc=\'Calculating redshift grid\'):\n')
     fp.write('\ticarogw.catalog.get_redshift_grid_for_files(outfolder,pix,grouping,cosmo_ref,Nintegration=Nintegration,Numsigma=Numsigma,zcut=zcut)\n')
     fp.write('print(\'All done!\') \n')
@@ -294,12 +302,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python calc_mthr_and_grid.py $1 $2')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python calc_mthr_and_grid.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'calc_mthr_and_grid.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = calc_mthr_and_grid.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -312,6 +319,8 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('output = logs/calc_mthr_and_grid_$(Item)_$(Item2).stdout \n')
     f.write('error = logs/calc_mthr_and_grid_$(Item)_$(Item2).stderr \n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue Item, Item2 from {:s}\n'.format(os.path.join(home_folder,'queue_NaN.txt')))
     f.close()
     
@@ -354,12 +363,11 @@ def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python initialize_catalog.py')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python initialize_catalog.py')
     f.close()
 
     f = open(os.path.join(home_folder,'initialize_catalog.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = initialize_catalog.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -369,7 +377,11 @@ def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile
     f.write('request_disk = 4G \n')    
     f.write('output = logs/initialize_catalog.stdout \n')
     f.write('error = logs/initialize_catalog.stderr \n')
+    f.write('stream_output = True\n')
+    f.write('stream_error = True\n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue\n')
     f.close()
 
@@ -426,7 +438,6 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     fp.write('subgrouping = \'{:s}\' \n'.format(subgrouping))
     fp.write('band = \'{:s}\' \n'.format(band))
     fp.write('epsilon = {:f} \n'.format(epsilon))
-    fp.write('LLstarcut = None \n')
     fp.write('ptype = \'{:s}\' \n'.format(ptype))
 
     
@@ -449,12 +460,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python calc_interpolant.py $1 $2')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python calc_interpolant.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'calc_interpolant.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = calc_interpolant.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -466,7 +476,11 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
 
     f.write('output = logs/calc_interpolant_$(Item)_$(Item2).stdout \n')
     f.write('error = logs/calc_interpolant_$(Item)_$(Item2).stderr \n')
+    f.write('stream_output = True\n')
+    f.write('stream_error = True\n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue Item, Item2 from {:s}\n'.format(os.path.join(home_folder,'queue_interpolant.txt')))
     f.close()
 
@@ -515,12 +529,11 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python finish_catalog.py')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python finish_catalog.py')
     f.close()
 
     f = open(os.path.join(home_folder,'finish_catalog.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = finish_catalog.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -530,7 +543,11 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
     f.write('request_disk = 4G \n')    
     f.write('output = logs/finish_catalog.stdout \n')
     f.write('error = logs/finish_catalog.stderr \n')
+    f.write('stream_output = True\n')
+    f.write('stream_error = True\n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue\n')
     f.close()
 
@@ -538,7 +555,7 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
 
 def write_all_scripts_catalog(home_folder,outfolder,catfile,nside,fields_to_take,grouping,apparent_magnitude_flag,
                             nside_mthr,mthr_percentile,Nintegration,Numsigma,zcut,outfile,subgrouping,
-                            band, epsilon, NumJobs, zsat=None, msat=None, uname='sarah.ferraiuolo', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
+                            band, epsilon, NumJobs, zsat=None, msat=None, mthr_fixed=None, uname='sarah.ferraiuolo', agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     '''
     A Driver to write all the python scripts required to build the galaxy catalog. It also creates a dag file to produce the catalog on condor
 
@@ -610,6 +627,7 @@ def write_all_scripts_catalog(home_folder,outfolder,catfile,nside,fields_to_take
     fp.write('subgrouping = \'{:s}\' \n'.format(subgrouping))
     fp.write('zsat = {:s} \n'.format(str(zsat)))
     fp.write('msat = {:s} \n'.format(str(msat)))
+    fp.write('mthr_fixed = {:s} \n'.format(str(mthr_fixed)))
     fp.write('band = \'{:s}\' \n'.format(band))
     fp.write('epsilon = {:f} \n'.format(epsilon))
     fp.write('NumJobs = {:d} \n'.format(NumJobs))
@@ -620,7 +638,7 @@ home_folder=home_folder,
 outfolder=outfolder,
 fields_to_take=fields_to_take,
 grouping=grouping,apparent_magnitude_flag=apparent_magnitude_flag,
-nside_mthr=nside_mthr,mthr_percentile=mthr_percentile,Nintegration=Nintegration,Numsigma=Numsigma,zcut=zcut,NumJobs=NumJobs)
+nside_mthr=nside_mthr,mthr_percentile=mthr_percentile,Nintegration=Nintegration,Numsigma=Numsigma,zcut=zcut,NumJobs=NumJobs, msat=msat, mthr_fixed=mthr_fixed)
     ''')
     
 
@@ -658,12 +676,11 @@ outfolder=outfolder,outfile=outfile, grouping=grouping,subgrouping=subgrouping,z
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('python get_scripts.py')
+    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python get_scripts.py')
     f.close()
 
     f = open(os.path.join(home_folder,'get_scripts.sub'),'w')
     f.write('universe = vanilla\n')
-    f.write('getenv = True\n')
     f.write('executable = get_scripts.sh \n')
     f.write('accounting_group = '+agroup+'\n')
     f.write('accounting_group_user = '+uname)
@@ -673,7 +690,11 @@ outfolder=outfolder,outfile=outfile, grouping=grouping,subgrouping=subgrouping,z
     f.write('request_disk = 4G \n')    
     f.write('output = logs/get_scripts.stdout \n')
     f.write('error = logs/get_scripts.stderr \n')
+    f.write('stream_output = True\n')
+    f.write('stream_error = True\n')
     f.write('Requirements = TARGET.Dual =!= True \n')
+    f.write('MY.flock_local = True\n')
+    f.write('MY.DESIRED_Sites = "none"\n')  
     f.write('queue\n')
     f.close()
 
