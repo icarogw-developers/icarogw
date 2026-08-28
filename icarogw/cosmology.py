@@ -433,9 +433,7 @@ class galaxy_MF(object):
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.R, self.z0 = -23.98, -18, -22.06, -1.6, 0.26e-02*1e9, 0., 0., 0., 0.1
             elif band=='vis-q1-euclid-evo':
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.R, self.z0 = -23.91, -18, -22.18, -1.57, 0.19e-02*1e9, -1.14, 3.20, 1.28, 0.03
-            elif band=='r-DES':
-                self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.R, self.z0 = -24.29, -16.33, -20.9, -1.01, 1.17e-02*1e9, 0., 0., 0., 0.1
-            elif band=='r-DES_v2' or band=='r-DELVE':
+            elif band=='r-DES' or band=='r-DELVE':
                 self.Mmin,self.Mmax,self.Mstar,self.alpha,self.phistar, self.Q, self.P, self.R, self.z0 = -24.46, -18, -21.1, -1.17, 1.28e-02*1e9, 0., 0., 0., 0.1
             else:
                 raise ValueError('Band not known')
