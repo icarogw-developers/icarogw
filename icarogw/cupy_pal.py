@@ -105,4 +105,7 @@ def iscupy(array):
     else:
         return False
 
-
+def _set_xp_and_dtype():
+    xp = cp if CUPY_LOADED else np
+    dtype = xp.float32 if (CUPY_LOADED and xp is cp) else xp.float64
+    return xp, dtype

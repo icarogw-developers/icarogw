@@ -1769,10 +1769,11 @@ class GaussianStationary():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin_g - self.mu) / self.sigma, (xp.inf - self.mu) / self.sigma 
+        gaussian = TruncatedGaussian(self.mu, self.sigma, self.mmin_g, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.mu, scale = self.sigma) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)
@@ -1792,10 +1793,11 @@ class GaussianLinear():
 
     def log_pdf(self,m):
         xp = get_module_array(m)
-        sx = get_module_array_scipy(m)
-        a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
-        gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
-        return gaussian
+        #sx = get_module_array_scipy(m)
+        #a, b = (self.mmin - self.muz) / self.sigmaz, (xp.inf - self.muz) / self.sigmaz 
+        gaussian = TruncatedGaussian(self.muz, self.sigmaz, self.mmin, xp.inf)
+        #gaussian = xp.log( sx.stats.truncnorm.pdf(m, a, b, loc = self.muz, scale = self.sigmaz) )
+        return gaussian._log_pdf(m)
 
     def pdf(self,m):
         xp = get_module_array(m)
@@ -1806,3 +1808,536 @@ class GaussianLinear():
     
     def return_mu_sigma_z( self):
         return self.muz, self.sigmaz
+
+
+class TriplePowerLaw(basic_1dimpdf):
+    '''
+        Class implementing the mass function model for three stationary PowerLaws.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaws.
+    '''
+
+    def __init__(
+        self, 
+        alpha_a, 
+        mmin_a, 
+        mmax_a, 
+        alpha_b, 
+        mmin_b, 
+        mmax_b, 
+        alpha_c, 
+        mmin_c, 
+        mmax_c, 
+        mix_a, 
+        mix_b, 
+        smooth=False, 
+        delta_m_a=1., 
+        delta_m_b=1., 
+        delta_m_c=1., 
+    ):
+
+        self.alpha_a = alpha_a
+        self.mmin_a = mmin_a
+        self.mmax_a = mmax_a
+        self.alpha_b = alpha_b
+        self.mmin_b = mmin_b
+        self.mmax_b = mmax_b
+        self.alpha_c = alpha_c
+        self.mmin_c = mmin_c
+        self.mmax_c = mmax_c
+        self.mix_a = mix_a
+        self.mix_b = mix_b
+        self.delta_m_a = delta_m_a
+        self.delta_m_b = delta_m_b
+        self.delta_m_c = delta_m_c
+
+        self.powerlaw_class_a = PowerLaw(
+            self.mmin_a, 
+            self.mmax_a, 
+            self.alpha_a, 
+        )
+        self.powerlaw_class_b = PowerLaw(
+            self.mmin_b, 
+            self.mmax_b, 
+            self.alpha_b, 
+        )
+        self.powerlaw_class_c = PowerLaw(
+            self.mmin_c, 
+            self.mmax_c, 
+            self.alpha_c, 
+        )
+
+        if smooth:
+            self.powerlaw_class_a = LowpassSmoothedProb(
+                self.powerlaw_class_a, 
+                self.delta_m_a
+            )
+            self.powerlaw_class_b = LowpassSmoothedProb(
+                self.powerlaw_class_b, 
+                self.delta_m_b
+            )
+            self.powerlaw_class_c = LowpassSmoothedProb(
+                self.powerlaw_class_c, 
+                self.delta_m_c
+            )
+
+        super().__init__(
+            minval=min(
+                self.powerlaw_class_a.minval, 
+                self.powerlaw_class_b.minval, 
+                self.powerlaw_class_c.minval, 
+            ), 
+            maxval=max(
+                self.powerlaw_class_a.maxval, 
+                self.powerlaw_class_b.maxval, 
+                self.powerlaw_class_c.maxval, 
+            ), 
+        )
+
+    def _log_pdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_pdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_pdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_pdf(x) + xp.log(1. - self.mix_a - self.mix_b)
+        return xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c)
+
+    def _log_cdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_cdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_cdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_cdf(x) + xp.log(1. - self.mix_a - self.mix_b)
+        return xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c)
+
+
+class QuadruplePowerLaw(basic_1dimpdf):
+    '''
+        Class implementing the mass function model for three stationary PowerLaws.
+
+        Some options are available:
+            - flag_powerlaw_smoothing applies a left window function to the PowerLaws.
+    '''
+
+    def __init__(
+        self, 
+        alpha_a, 
+        mmin_a, 
+        mmax_a, 
+        alpha_b, 
+        mmin_b, 
+        mmax_b, 
+        alpha_c, 
+        mmin_c, 
+        mmax_c, 
+        alpha_d, 
+        mmin_d, 
+        mmax_d, 
+        mix_a, 
+        mix_b, 
+        mix_c, 
+        smooth=False, 
+        delta_m_a=1., 
+        delta_m_b=1., 
+        delta_m_c=1., 
+        delta_m_d=1.
+    ):
+
+        self.alpha_a = alpha_a
+        self.mmin_a = mmin_a
+        self.mmax_a = mmax_a
+        self.alpha_b = alpha_b
+        self.mmin_b = mmin_b
+        self.mmax_b = mmax_b
+        self.alpha_c = alpha_c
+        self.mmin_c = mmin_c
+        self.mmax_c = mmax_c
+        self.alpha_d = alpha_d
+        self.mmin_d = mmin_d
+        self.mmax_d = mmax_d
+        self.mix_a = mix_a
+        self.mix_b = mix_b
+        self.mix_c = mix_c
+        self.delta_m_a = delta_m_a
+        self.delta_m_b = delta_m_b
+        self.delta_m_c = delta_m_c
+        self.delta_m_d = delta_m_d
+
+        self.powerlaw_class_a = PowerLaw(
+            self.mmin_a, 
+            self.mmax_a, 
+            self.alpha_a, 
+        )
+        self.powerlaw_class_b = PowerLaw(
+            self.mmin_b, 
+            self.mmax_b, 
+            self.alpha_b, 
+        )
+        self.powerlaw_class_c = PowerLaw(
+            self.mmin_c, 
+            self.mmax_c, 
+            self.alpha_c, 
+        )
+        self.powerlaw_class_d = PowerLaw(
+            self.mmin_d, 
+            self.mmax_d, 
+            self.alpha_d, 
+        )
+
+        if smooth:
+            self.powerlaw_class_a = LowpassSmoothedProb(
+                self.powerlaw_class_a, 
+                self.delta_m_a
+            )
+            self.powerlaw_class_b = LowpassSmoothedProb(
+                self.powerlaw_class_b, 
+                self.delta_m_b
+            )
+            self.powerlaw_class_c = LowpassSmoothedProb(
+                self.powerlaw_class_c, 
+                self.delta_m_c
+            )
+            self.powerlaw_class_d = LowpassSmoothedProb(
+                self.powerlaw_class_d, 
+                self.delta_m_d
+            )
+
+        super().__init__(
+            minval=min(
+                self.powerlaw_class_a.minval, 
+                self.powerlaw_class_b.minval, 
+                self.powerlaw_class_c.minval, 
+                self.powerlaw_class_d.minval
+            ), 
+            maxval=max(
+                self.powerlaw_class_a.maxval, 
+                self.powerlaw_class_b.maxval, 
+                self.powerlaw_class_c.maxval, 
+                self.powerlaw_class_d.maxval
+            ), 
+        )
+
+    def _log_pdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_pdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_pdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_pdf(x) + xp.log(self.mix_c)
+        log_pl_d = self.powerlaw_class_d.log_pdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
+        return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
+
+    def _log_cdf(self, x):
+        xp = get_module_array(x)
+        log_pl_a = self.powerlaw_class_a.log_cdf(x) + xp.log(self.mix_a)
+        log_pl_b = self.powerlaw_class_b.log_cdf(x) + xp.log(self.mix_b)
+        log_pl_c = self.powerlaw_class_c.log_cdf(x) + xp.log(self.mix_c)
+        log_pl_d = self.powerlaw_class_d.log_cdf(x) + xp.log(1 - self.mix_a - self.mix_b - self.mix_c)
+        return xp.logaddexp(xp.logaddexp(xp.logaddexp(log_pl_a, log_pl_b), log_pl_c), log_pl_d)
+
+# ------------------------------------ #
+#          B-splines models            #
+# ------------------------------------ #
+
+class logBspline(basic_1dimpdf):
+
+    def __init__(self, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
+        super().__init__(minval, maxval)
+        
+        self.degree = degree
+        self.n_basis = n_basis
+        self.spacing = spacing
+        self.spline_variable = spline_variable
+
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+
+        self._setup_grid_and_knots()
+
+    def _setup_grid_and_knots(self):
+        """
+        Initialises knots and precompute B-spline grid for normalisation.
+        """
+        # Building the knots sequence and the integration grid depending on spacing option.
+        if self.spacing == "log":
+            interior = np.logspace(
+                np.log10(self.minval), 
+                np.log10(self.maxval), 
+                self.n_basis - self.degree + 1
+            )
+            self._x_grid = np.logspace(
+                np.log10(self.minval), 
+                np.log10(self.maxval), 
+                1000
+            )
+        elif self.spacing == "lin":
+            interior = np.linspace(
+                self.minval, 
+                self.maxval, 
+                self.n_basis - self.degree + 1
+            )
+            self._x_grid = np.linspace(
+                self.minval, 
+                self.maxval, 
+                1000
+            )
+        else:
+            raise ValueError(f"Invalid '{self.spacing}' spacing option. Please choose from: log, lin.")
+
+        # Building a clamped knots sequence (i.e. repeated end knots values)
+        t_start, t_end = np.repeat(interior[0], self.degree), np.repeat(interior[-1], self.degree)
+        self.t = np.concatenate([t_start, interior, t_end])
+
+        # Building spline grid for normalisation, depending on the spline_variable option
+        if self.spline_variable == 'log':
+            # print(np.log(self.t), np.diff(np.log(self.t)))
+            _s_grid = sn.interpolate.BSpline(
+                np.log(self.t), self.coeffs, self.degree
+            )(np.log(self._x_grid))
+        elif self.spline_variable == 'lin':
+            _s_grid = sn.interpolate.BSpline(
+                self.t, self.coeffs, self.degree
+            )(self._x_grid)
+        else:
+            raise ValueError(f"Invalid '{self.spline_variable}' spline variable option. Please choose from: log, lin.")
+        self._s_grid = _s_grid
+
+    def eval_spline(self, x):
+        """
+        Evaluate the Bspline at x using scipy interpolant
+        """
+        xp = get_module_array(x)
+        xn = get_module_array_scipy(x)
+        t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
+        # evaluate the spline depending on the spline_variable option
+        if self.spline_variable == 'log':
+            t_local = xp.log(t)
+            x_local = xp.log(x)
+        elif self.spline_variable == 'lin':
+            t_local = t
+            x_local = x
+        else:
+            # Technically useless case, already raised when intialising an instance of the class, kept for consistency
+            raise ValueError(f"Invalid '{self.spline_variable}' spline variable option. Please choose from: log, lin.")
+        interpolant = xn.interpolate.BSpline(t_local, coeffs, self.degree)
+        return interpolant(x_local)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_max = np.max(self._s_grid)
+        integrand = np.exp(self._s_grid - s_max)
+        Z = np.trapezoid(integrand, self._x_grid)
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class PowerLaw_logBspline(basic_1dimpdf):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline(minval, maxval, n_basis, degree, spacing, spline_variable, **coeffs)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_grid = self.component_spline._s_grid
+
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        Z = np.trapezoid(integrand, self.component_spline._x_grid)
+
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
+        )
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha)) # to 'un-normalise' the PL pdf
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class logBspline_fixedKnots(basic_1dimpdf):
+
+    def __init__(self, minval, maxval, n_basis, degree, knots, **coeffs):
+        super().__init__(minval, maxval)
+        
+        self.degree = degree
+        self.n_basis = n_basis
+
+        self.coeffs = np.asarray([0.0] + [coeffs[f'c{i}'] for i in range(1, self.n_basis-1)] + [0.0])
+        self.unclamped_t = np.array(knots)
+
+        self._setup_grid_and_knots()
+
+    def _setup_grid_and_knots(self):
+        """
+        Recompute knots and precompute B-spline basis grid.
+        Uses self.spacing ("log" or "uniform") to control spacing type.
+        """
+        t_start = np.repeat(self.unclamped_t[0], self.degree)
+        t_end = np.repeat(self.unclamped_t[-1], self.degree)
+        self.t = np.concatenate([t_start, self.unclamped_t, t_end])
+        # Building x grid for normalisation
+        self._x_grid = np.linspace(self.minval, self.maxval, 1000)
+        self._s_grid = sn.interpolate.BSpline(self.t, self.coeffs, self.degree)(self._x_grid)
+
+    def eval_spline(self, x):
+        """
+        Evaluate the Bspline at x using scipy interpolant
+        """
+        xp = get_module_array(x)
+        xn = get_module_array_scipy(x)
+        t, coeffs = xp.asarray(self.t), xp.asarray(self.coeffs)
+        interpolant = xn.interpolate.BSpline(t, coeffs, self.degree)
+        return interpolant(x)
+
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_max = np.max(self._s_grid)
+        
+        integrand = np.exp(self._s_grid - s_max)
+        Z = np.trapezoid(integrand, self._x_grid)
+
+        return np.log(Z + np.finfo(Z.dtype).tiny) + s_max
+
+    def _log_pdf(self, x, normalize=True):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        if normalize:
+            return self.eval_spline(x) - self.logZ()
+        else:
+            return self.eval_spline(x)
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(self._log_pdf(x_interp, normalize=False)), 
+            x = x_interp, 
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
+
+
+class PowerLaw_logBspline_fixedKnots(basic_1dimpdf):
+
+    def __init__(self, alpha, minval, maxval, n_basis, degree, knots, **coeffs):
+        super().__init__(minval, maxval)
+        self.component_pl = PowerLaw(minpl=minval, maxpl=maxval, alpha=alpha)
+        self.component_spline = logBspline_fixedKnots(minval=minval, maxval=maxval, n_basis=n_basis, degree=degree, knots=knots, **coeffs)
+    
+    def logZ(self):
+        """
+        Compute log-normalization factor.
+        """
+        s_grid = self.component_spline._s_grid
+
+        pl_grid = self.component_pl.alpha * np.log(self.component_spline._x_grid)
+
+        tot_grid = s_grid + pl_grid
+        tot_max = np.max(tot_grid)
+        
+        integrand = np.exp(pl_grid + s_grid - tot_max)
+        Z = np.trapezoid(integrand, self.component_spline._x_grid)
+
+        to_ret = np.log(Z + np.finfo(Z.dtype).tiny) + tot_max
+        return to_ret
+
+    def _log_pdf(self, x):
+        return (
+            self.component_pl._log_pdf(x)
+            + self.component_spline._log_pdf(x, normalize=False)
+            - self.logZ()
+            + np.log(PL_normfact(
+                minpl=self.minval, 
+                maxpl=self.maxval, 
+                alpha=self.component_pl.alpha
+            ))
+        )
+    
+    def _log_cdf(self, x):
+        """
+        Evaluate log of normalized probability density function at m.
+        """
+        xp = get_module_array(x)
+
+        x_interp = xp.asarray(self.component_spline._x_grid)
+        y_interp = sn.integrate.cumulative_trapezoid(
+            np.exp(
+                self.component_pl._log_pdf(x_interp)
+                + self.component_spline._log_pdf(x_interp, normalize=False)
+                + np.log(PL_normfact(minpl=self.minval, maxpl=self.maxval, alpha=self.component_pl.alpha))
+            ), 
+            x = x_interp,
+            initial = 0.
+        )
+        y_interp = y_interp / y_interp[-1]
+        y_interp = xp.asarray(y_interp)
+
+        return xp.log(xp.interp(x, x_interp, y_interp))
