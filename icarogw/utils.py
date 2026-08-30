@@ -34,7 +34,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw',memory=10000,cpus=1,disk=10000):
             f.write('\n')
             f.write('cd ${MYJOB_DIR}')
             f.write('\n')
-            f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python '+file)
+            f.write('python '+file)
             f.close()
 
             f = open(home_folder+fname+'.sub', 'w')
@@ -145,7 +145,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python make_pixel_files.py')
+    f.write('python make_pixel_files.py')
     f.close()
 
     f = open(os.path.join(home_folder,'make_pixel_files.sub'),'w')
@@ -238,7 +238,7 @@ def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, field
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python clear_NaNs.py $1 $2')
+    f.write('python clear_NaNs.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'clear_NaNs.sub'),'w')
@@ -302,7 +302,7 @@ def write_condor_files_nan_removal_mthr_computation(home_folder,outfolder, field
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python calc_mthr_and_grid.py $1 $2')
+    f.write('python calc_mthr_and_grid.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'calc_mthr_and_grid.sub'),'w')
@@ -363,7 +363,7 @@ def write_condor_files_initialize_icarogw_catalog(home_folder,outfolder, outfile
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python initialize_catalog.py')
+    f.write('python initialize_catalog.py')
     f.close()
 
     f = open(os.path.join(home_folder,'initialize_catalog.sub'),'w')
@@ -460,7 +460,7 @@ agroup='ligo.dev.o4.cbc.hubble.icarogw'):
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python calc_interpolant.py $1 $2')
+    f.write('python calc_interpolant.py $1 $2')
     f.close()
 
     f = open(os.path.join(home_folder,'calc_interpolant.sub'),'w')
@@ -529,7 +529,7 @@ def write_condor_files_finish_catalog(home_folder,outfolder, outfile,grouping, s
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python finish_catalog.py')
+    f.write('python finish_catalog.py')
     f.close()
 
     f = open(os.path.join(home_folder,'finish_catalog.sub'),'w')
@@ -676,7 +676,7 @@ outfolder=outfolder,outfile=outfile, grouping=grouping,subgrouping=subgrouping,z
     f.write('\n')
     f.write('cd ${MYJOB_DIR}')
     f.write('\n')
-    f.write('/home/sarah.ferraiuolo/.conda/envs/icarogw_euclid/bin/python get_scripts.py')
+    f.write('python get_scripts.py')
     f.close()
 
     f = open(os.path.join(home_folder,'get_scripts.sub'),'w')
