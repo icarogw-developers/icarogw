@@ -11,3 +11,4 @@ from . import stochastic
 from . import utils
 from . import wrappers
 from . import omega_gw
+from . import density_contrast

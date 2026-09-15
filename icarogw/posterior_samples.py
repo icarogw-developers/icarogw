@@ -128,6 +128,19 @@ class posterior_samples_catalog(object):
         '''
         for i,event in enumerate(list(self.posterior_samples_dict.keys())):
             self.posterior_samples_dict[event].pixelize_with_catalog(catalog)
+
+    def pixelize_with_mhealpy(self,map):
+        '''
+        This method pixelize the posterior samples using the UNIQ scheme by a MOC 
+        map of the galaxy catalog
+
+        Parameters
+        ----------
+        map: class
+            mhealpy map class
+        '''
+        for i,event in enumerate(list(self.posterior_samples_dict.keys())):
+            self.posterior_samples_dict[event].pixelize_with_mhealpy(map) 
             
     def reweight_PE(self,rate_wrapper,Nsamp,replace=True):
         '''
@@ -182,6 +195,10 @@ class posterior_samples(object):
 
     def pixelize_with_catalog(self,catalog):
         self.posterior_data['sky_indices'] = catalog.get_NUNIQ_pixel(self.posterior_data['right_ascension'],self.posterior_data['declination'])
+
+    def pixelize_with_mhealpy(self,map):
+            theta, phi = np.pi/2-self.posterior_data['declination'], self.posterior_data['right_ascension']
+            self.posterior_data['sky_indices'] = map.ang2pix(theta, phi)
         
     def cupyfy(self):
         ''' Converts all the posterior samples to cupy'''

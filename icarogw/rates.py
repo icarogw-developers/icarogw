@@ -2,6 +2,116 @@ from .cupy_pal import cp2np, np2cp, get_module_array, get_module_array_scipy, is
 from .conversions import detector2source_jacobian, detector2source, detector2source_jacobian_q, detector2source_jacobian_single_mass
 from scipy.stats import gaussian_kde
 from .wrappers import modgravity_wrappers, lcdm_wrappers
+from .cosmology import COST_C
+
+class CBC_density_contrast(object):
+    def __init__(self,delta_map,cosmology_wrapper,mass_wrapper,rate_wrapper,spin_wrapper=None,scale_free=False):
+        
+        self.delta_map = delta_map
+        self.cw = cosmology_wrapper
+        self.mw = mass_wrapper
+        self.rw = rate_wrapper
+        self.sw = spin_wrapper
+        self.scale_free = scale_free
+        
+        if scale_free:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters
+        else:
+            self.population_parameters =  self.cw.population_parameters+self.mw.population_parameters+self.rw.population_parameters + ['R0']
+            
+        event_parameters = ['mass_1', 'mass_2', 'luminosity_distance','sky_indices']
+        
+        if self.sw is not None:
+            self.population_parameters = self.population_parameters+self.sw.population_parameters
+            event_parameters = event_parameters + self.sw.event_parameters
+
+        # Add bias_gw as additional parameter for inference
+        self.population_parameters = self.population_parameters + ['bias_gw']
+
+        self.PEs_parameters = event_parameters.copy()
+        self.injections_parameters = event_parameters.copy()
+        self.injections_parameters.remove('sky_indices')
+            
+    def update(self,**kwargs):
+        self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
+        self.mw.update(**{key: kwargs[key] for key in self.mw.population_parameters})
+        self.rw.update(**{key: kwargs[key] for key in self.rw.population_parameters})
+        self.bias_gw = kwargs['bias_gw']
+
+        if self.cw.__class__.__name__ in modgravity_wrappers:
+            self.cw_bgwrap = self.cw.bgwrap
+        elif self.cw.__class__.__name__ in lcdm_wrappers:
+            self.cw_bgwrap = self.cw
+        else:
+            raise ValueError('Please pass a LCDM or Mod gravity wrapper')
+        
+        if self.sw is not None:
+            self.sw.update(**{key: kwargs[key] for key in self.sw.population_parameters})
+            
+        if not self.scale_free:           
+            self.R0 = kwargs['R0']
+        
+    def log_rate_PE(self,prior,**kwargs):
+        xp = get_module_array(prior)
+        
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
+
+        # defining the EM comoving distance in Mpc/h, effectively it has H0=100 km/s/Mpc
+        dcomoving = self.cw_bgwrap.cosmology.z2dl(z)/(1+z)
+        dcomoving_h = self.cw_bgwrap.cosmology.little_h*dcomoving # In units of Mpc/h
+
+        oshape = dcomoving_h.shape
+        delta_dm = self.delta_map.get_density_contrast(dcomoving_h.flatten(),kwargs['sky_indices'].flatten())
+        delta_dm.reshape(oshape)
+
+        # Partial derivative ddl/ddc
+        # TO-DO do not use H(z) as this is very slow, use instead an interpolant
+        d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.astropy_cosmo.H(z).value/COST_C))
+
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(3)+2*xp.log(dcomoving)+xp.log1p(xp.clip(self.bias_gw*delta_dm,a_min=-1,a_max=None)) \
+        -xp.log1p(z)-xp.log(d2s_j)-xp.log(prior)
+        
+        if self.sw is not None:
+            log_weights+=self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
+            
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+    
+    def log_rate_injections(self,prior,**kwargs):
+        xp = get_module_array(prior)
+                
+        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
+
+        # defining the EM comoving distance in Mpc/h, effectively it has H0=100 km/s/Mpc
+        dcomoving = self.cw_bgwrap.cosmology.z2dl(z)/(1+z)
+        dcomoving_h = self.cw_bgwrap.cosmology.little_h*dcomoving # In units of Mpc/h
+
+        delta_dm = 0. # We assume uniform in comoving volume for the selection bias
+
+        # Partial derivative ddl/ddc
+        d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.astropy_cosmo.H(z).value/COST_C))
+
+        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(3)+2*xp.log(dcomoving)+xp.log1p(self.bias_gw*delta_dm) \
+        -xp.log1p(z)-xp.log(d2s_j)-xp.log(prior)
+        
+        if self.sw is not None:
+            log_weights+=self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
+            
+        if not self.scale_free:
+            log_out = log_weights + xp.log(self.R0)
+        else:
+            log_out = log_weights
+            
+        return log_out
+
+
+
+
+
 
 class CBC_rate_mchirp_q(object):
     '''

@@ -73,6 +73,35 @@ class base_cosmology(object):
         ravelled=xp.ravel(xp.log10(z))
         interpo=xp.interp(ravelled,log10_z,log10_dl_at_z)
         return xp.reshape(10**interpo,origin)
+
+    def z2Hz(self,z):
+            '''
+            Converts redshift to Hubble parameter in km/s/Mpc
+            
+            Parameters
+            ----------
+            z: xp.array
+                Redshift
+            
+            Reutrns
+            -------
+            Hz: xp.array
+                Hubble parameter in km/s/Mpc
+            ''' 
+            self._checkz(z)
+            origin = z.shape
+            xp = get_module_array(z)
+            
+            if iscupy(z):
+                log10_z = self.log10_z_gpu
+                log10_Hz_at_z = self.log10_Hz_at_z_gpu
+            else:
+                log10_z = self.log10_z_cpu
+                log10_Hz_at_z = self.log10_Hz_at_z_cpu
+            
+            ravelled=xp.ravel(xp.log10(z))
+            interpo=xp.interp(ravelled,log10_z,log10_Hz_at_z)
+            return xp.reshape(10**interpo,origin)
     
     def z2Vc(self,z):
         '''
@@ -232,8 +261,9 @@ class astropycosmology(base_cosmology):
         
         self.log10_dVc_dzdOmega_cpu=np.log10(astropy_cosmo.differential_comoving_volume(self.z_cpu).value)-9. # Conversion from Mpc to Gpc
         self.log10_Vc_cpu=np.log10(astropy_cosmo.comoving_volume(self.z_cpu).value)-9. # Conversion to Gpc
-        self.log10_dl_at_z_cpu=np.log10(astropy_cosmo.luminosity_distance(self.z_cpu).value)
-        self.log10_ddl_by_dz_cpu=np.log10((np.power(10.,self.log10_dl_at_z_cpu)/(1.+self.z_cpu))+COST_C*(1.+self.z_cpu)/astropy_cosmo.H(self.z_cpu).value)
+        self.log10_dl_at_z_cpu = np.log10(astropy_cosmo.luminosity_distance(self.z_cpu).value)
+        self.log10_Hz_at_z_cpu = np.log10(astropy_cosmo.H(self.z_cpu).value)
+        self.log10_ddl_by_dz_cpu=np.log10((np.power(10.,self.log10_dl_at_z_cpu)/(1.+self.z_cpu))+COST_C*(1.+self.z_cpu)/np.power(10.,self.log10_Hz_at_z_cpu))
         
         if is_there_cupy():
             
@@ -241,6 +271,7 @@ class astropycosmology(base_cosmology):
             self.log10_Vc_gpu=np2cp(self.log10_Vc_cpu)
             self.log10_dl_at_z_gpu=np2cp(self.log10_dl_at_z_cpu)
             self.log10_ddl_by_dz_gpu=np2cp(self.log10_ddl_by_dz_cpu)
+            self.log10_Hz_at_z_gpu=np2cp(self.log10_Hz_at_z_cpu)
 
 # LVK Reviewed
 class extraD_astropycosmology(astropycosmology):
