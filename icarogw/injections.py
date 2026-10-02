@@ -99,7 +99,18 @@ class injections(object):
         
         if isinstance(self.prior,np.ndarray):
             self.numpyfy()
-            
+
+    def pixelize_with_mhealpy(self,map):
+
+        theta, phi = np.pi/2-cp2np(self.injections_data_original['declination']), cp2np(self.injections_data_original['right_ascension'])
+        self.injections_data_original['sky_indices'] = map.ang2pix(theta, phi)
+
+        theta, phi = np.pi/2-cp2np(self.injections_data['declination']), cp2np(self.injections_data['right_ascension'])
+        self.injections_data['sky_indices'] = map.ang2pix(theta, phi)
+
+        if isinstance(self.prior,np.ndarray):
+            self.numpyfy()
+
     def update_weights(self,rate_wrapper):
         '''
         This method updates the weights associated to each injection and calculates the detected CBC rate per year in detector frame

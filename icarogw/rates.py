@@ -30,7 +30,7 @@ class CBC_density_contrast(object):
 
         self.PEs_parameters = event_parameters.copy()
         self.injections_parameters = event_parameters.copy()
-        self.injections_parameters.remove('sky_indices')
+        #self.injections_parameters.remove('sky_indices')
             
     def update(self,**kwargs):
         self.cw.update(**{key: kwargs[key] for key in self.cw.population_parameters})
@@ -62,12 +62,11 @@ class CBC_density_contrast(object):
 
         oshape = dcomoving_h.shape
         delta_dm = self.delta_map.get_density_contrast(dcomoving_h.flatten(),kwargs['sky_indices'].flatten())
-        delta_dm.reshape(oshape)
+        delta_dm = xp.reshape(delta_dm,oshape)
 
         # Partial derivative ddl/ddc
         # TO-DO do not use H(z) as this is very slow, use instead an interpolant
-        d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.astropy_cosmo.H(z).value/COST_C))
-
+        d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.z2Hz(z)/COST_C))
         log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(3)+2*xp.log(dcomoving)+xp.log1p(xp.clip(self.bias_gw*delta_dm,a_min=-1,a_max=None)) \
         -xp.log1p(z)-xp.log(d2s_j)-xp.log(prior)
         
@@ -80,33 +79,36 @@ class CBC_density_contrast(object):
             log_out = log_weights
             
         return log_out
-    
+
     def log_rate_injections(self,prior,**kwargs):
-        xp = get_module_array(prior)
+        return self.log_rate_PE(prior,**kwargs)
+    
+    # def log_rate_injections(self,prior,**kwargs):
+    #     xp = get_module_array(prior)
                 
-        ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
+    #     ms1, ms2, z = detector2source(kwargs['mass_1'],kwargs['mass_2'],kwargs['luminosity_distance'],self.cw.cosmology)
 
-        # defining the EM comoving distance in Mpc/h, effectively it has H0=100 km/s/Mpc
-        dcomoving = self.cw_bgwrap.cosmology.z2dl(z)/(1+z)
-        dcomoving_h = self.cw_bgwrap.cosmology.little_h*dcomoving # In units of Mpc/h
+    #     # defining the EM comoving distance in Mpc/h, effectively it has H0=100 km/s/Mpc
+    #     dcomoving = self.cw_bgwrap.cosmology.z2dl(z)/(1+z)
+    #     dcomoving_h = self.cw_bgwrap.cosmology.little_h*dcomoving # In units of Mpc/h
 
-        delta_dm = 0. # We assume uniform in comoving volume for the selection bias
+    #     delta_dm = 0. # We assume uniform in comoving volume for the selection bias
 
-        # Partial derivative ddl/ddc
-        d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.astropy_cosmo.H(z).value/COST_C))
+    #     # Partial derivative ddl/ddc
+    #     d2s_j = xp.abs(xp.power(1+z,2.)*self.cw.cosmology.ddl_by_dz_at_z(z)*(self.cw_bgwrap.cosmology.astropy_cosmo.H(z).value/COST_C))
 
-        log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(3)+2*xp.log(dcomoving)+xp.log1p(self.bias_gw*delta_dm) \
-        -xp.log1p(z)-xp.log(d2s_j)-xp.log(prior)
+    #     log_weights=self.mw.log_pdf(ms1,ms2)+self.rw.rate.log_evaluate(z)+xp.log(3)+2*xp.log(dcomoving)+xp.log1p(self.bias_gw*delta_dm) \
+    #     -xp.log1p(z)-xp.log(d2s_j)-xp.log(prior)
         
-        if self.sw is not None:
-            log_weights+=self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
+    #     if self.sw is not None:
+    #         log_weights+=self.sw.log_pdf(**{key:kwargs[key] for key in self.sw.event_parameters})
             
-        if not self.scale_free:
-            log_out = log_weights + xp.log(self.R0)
-        else:
-            log_out = log_weights
+    #     if not self.scale_free:
+    #         log_out = log_weights + xp.log(self.R0)
+    #     else:
+    #         log_out = log_weights
             
-        return log_out
+    #     return log_out
 
 
 
